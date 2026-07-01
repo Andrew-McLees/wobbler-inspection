@@ -1273,6 +1273,269 @@ function createSlipperModule(config) {
 }
 
 // =============================================================================
+// SLIDING SHOE MODULE FACTORY
+// 4 sections: Top East, Top West, Bottom East, Bottom West
+// Each section: 4 rows (3-2-2-3 points), arc layout
+// Status = sum of each row's max value
+// Thresholds on sum: yellow >= 0.050, orange >= 0.100, red >= 0.200
+// =============================================================================
+
+var SS_LIMITS = { yellow: 0.050, orange: 0.100, red: 0.200 };
+
+var SS_SECTIONS = [
+  { id: 'te', label: 'Top East'    },
+  { id: 'tw', label: 'Top West'    },
+  { id: 'be', label: 'Bottom East' },
+  { id: 'bw', label: 'Bottom West' }
+];
+
+var SS_ROW_COUNTS = [3, 2, 2, 3];
+var SS_ROW_LABELS = ['Arc Top', 'Mid Upper', 'Mid Lower', 'Arc Bottom'];
+
+function getSSStatus(sum) {
+  if (sum >= SS_LIMITS.red)    return { key: 'red',    label: 'Replace Part Now', color: '#C0392B' };
+  if (sum >= SS_LIMITS.orange) return { key: 'orange', label: 'Have Parts Ready', color: '#E67E22' };
+  if (sum >= SS_LIMITS.yellow) return { key: 'yellow', label: 'Order Parts',      color: '#F1C40F' };
+  return                              { key: 'normal', label: 'Normal',           color: '#FFFFFF' };
+}
+
+function validateSSMeasurement(val) {
+  if (val === '' || val === null || val === undefined) return { valid: false, number: null };
+  var n = parseFloat(val);
+  if (isNaN(n) || n < 0 || n > 2) return { valid: false };
+  return { valid: true, number: n };
+}
+
+function ssEmptyMeasurements() {
+  var m = {};
+  SS_SECTIONS.forEach(function(sec) {
+    m[sec.id] = {};
+    SS_ROW_COUNTS.forEach(function(count, ri) {
+      m[sec.id]['r' + ri] = [];
+      for (var i = 0; i < count; i++) m[sec.id]['r' + ri].push('');
+    });
+  });
+  return m;
+}
+
+function computeSSResults(measurements) {
+  return SS_SECTIONS.map(function(sec) {
+    var rowMaxes = SS_ROW_COUNTS.map(function(count, ri) {
+      var vals = measurements[sec.id]['r' + ri]
+        .map(function(v) { return validateSSMeasurement(v); })
+        .filter(function(v) { return v.valid && v.number !== null; })
+        .map(function(v) { return v.number; });
+      return vals.length ? Math.max.apply(null, vals) : null;
+    });
+    var validMaxes = rowMaxes.filter(function(v) { return v !== null; });
+    var sum = validMaxes.length === SS_ROW_COUNTS.length
+      ? Math.round(validMaxes.reduce(function(a, b) { return a + b; }, 0) * 10000) / 10000
+      : null;
+    return { id: sec.id, label: sec.label, rowMaxes: rowMaxes, sum: sum, status: sum !== null ? getSSStatus(sum) : null };
+  });
+}
+
+function renderSSSectionSVG(container, sectionId, measurements, onInput) {
+  container.innerHTML = '';
+  var VW = 200, VH = 220, cx = 100, cy = 110, arcR = 72;
+  var svg = svgEl('svg', { viewBox: '0 0 ' + VW + ' ' + VH, width: '100%', height: '100%' });
+
+  function arcPath(startDeg, endDeg, r) {
+    var s = startDeg * Math.PI / 180, e = endDeg * Math.PI / 180;
+    return 'M ' + (cx + r * Math.cos(s)).toFixed(1) + ' ' + (cy + r * Math.sin(s)).toFixed(1) +
+           ' A ' + r + ' ' + r + ' 0 0 1 ' + (cx + r * Math.cos(e)).toFixed(1) + ' ' + (cy + r * Math.sin(e)).toFixed(1);
+  }
+
+  svg.appendChild(svgEl('path', { d: arcPath(210, 330, arcR), fill: 'none', stroke: '#C0392B', 'stroke-width': 2.5, 'stroke-linecap': 'round' }));
+  svg.appendChild(svgEl('path', { d: arcPath(30, 150, arcR),  fill: 'none', stroke: '#C0392B', 'stroke-width': 2.5, 'stroke-linecap': 'round' }));
+
+  var pts = [
+    [
+      { x: cx + arcR * Math.cos(210 * Math.PI/180), y: cy + arcR * Math.sin(210 * Math.PI/180) },
+      { x: cx + arcR * Math.cos(270 * Math.PI/180), y: cy + arcR * Math.sin(270 * Math.PI/180) },
+      { x: cx + arcR * Math.cos(330 * Math.PI/180), y: cy + arcR * Math.sin(330 * Math.PI/180) }
+    ],
+    [ { x: cx - 28, y: cy - 18 }, { x: cx + 28, y: cy - 18 } ],
+    [ { x: cx - 28, y: cy + 18 }, { x: cx + 28, y: cy + 18 } ],
+    [
+      { x: cx + arcR * Math.cos(30  * Math.PI/180), y: cy + arcR * Math.sin(30  * Math.PI/180) },
+      { x: cx + arcR * Math.cos(90  * Math.PI/180), y: cy + arcR * Math.sin(90  * Math.PI/180) },
+      { x: cx + arcR * Math.cos(150 * Math.PI/180), y: cy + arcR * Math.sin(150 * Math.PI/180) }
+    ]
+  ];
+
+  pts.forEach(function(rowPts, ri) {
+    rowPts.forEach(function(pt, pi) {
+      var fo = document.createElementNS(SVG_NS, 'foreignObject');
+      fo.setAttribute('x', (pt.x - 22).toFixed(1));
+      fo.setAttribute('y', (pt.y - 11).toFixed(1));
+      fo.setAttribute('width', 44);
+      fo.setAttribute('height', 22);
+      var inp = document.createElement('input');
+      inp.type = 'number';
+      inp.step = '0.001';
+      inp.className = 'ss-point-input';
+      inp.value = measurements[sectionId]['r' + ri][pi] || '';
+      inp.addEventListener('input', function(e) { onInput(ri, pi, e.target.value); });
+      fo.appendChild(inp);
+      svg.appendChild(fo);
+    });
+  });
+
+  container.appendChild(svg);
+}
+
+function createSlidingShoeModule(config) {
+  var p = config.storageKey;
+  var state = { inspector: '', date: '', measurements: ssEmptyMeasurements() };
+  var el = {};
+  var tbody;
+
+  function init(container) {
+    state.measurements = ssEmptyMeasurements();
+
+    var sectionsHTML = SS_SECTIONS.map(function(sec) {
+      return [
+        '<div class="ss-section-card" id="' + p + '-sec-' + sec.id + '">',
+        '  <div class="ss-section-title">' + sec.label + '</div>',
+        '  <div class="ss-section-body">',
+        '    <div class="ss-svg-wrap" id="' + p + '-svg-' + sec.id + '"></div>',
+        '    <div class="ss-row-summary">',
+        SS_ROW_LABELS.map(function(lbl, ri) {
+          return '<div class="ss-row-line"><span class="ss-row-lbl">' + lbl + '</span>' +
+                 '<span class="ss-row-max" id="' + p + '-max-' + sec.id + '-' + ri + '">—</span></div>';
+        }).join(''),
+        '    </div>',
+        '  </div>',
+        '  <div class="ss-section-footer">',
+        '    <span class="ss-sum-label">Row Max Sum:</span>',
+        '    <span class="ss-sum-val" id="' + p + '-sum-' + sec.id + '">—</span>',
+        '    <span class="ss-status-lbl" id="' + p + '-sts-' + sec.id + '">—</span>',
+        '  </div>',
+        '</div>'
+      ].join('');
+    }).join('');
+
+    container.innerHTML = [
+      '<div class="module-header">',
+      '  <h2 class="module-title">' + config.title + '</h2>',
+      '  <div class="module-meta">',
+      '    <label class="meta-field"><span>Inspector</span>',
+      '      <input id="' + p + '-inspector" type="text" placeholder="Name" class="meta-input" /></label>',
+      '    <label class="meta-field"><span>Date</span>',
+      '      <input id="' + p + '-date" type="date" class="meta-input" /></label>',
+      '  </div>',
+      '</div>',
+      '<div id="' + p + '-banner" class="status-banner s-normal">—</div>',
+      '<div class="ss-grid">' + sectionsHTML + '</div>',
+      '<div class="table-section">',
+      '  <div class="panel-title">Inspection Results</div>',
+      '  <div id="' + p + '-table"></div>',
+      '</div>',
+      '<div class="action-bar">',
+      '  <button id="' + p + '-save"  class="btn btn-primary">Save Inspection</button>',
+      '  <button id="' + p + '-reset" class="btn btn-ghost">Reset</button>',
+      '  <button id="' + p + '-print" class="btn btn-ghost">Print Report</button>',
+      '</div>'
+    ].join('');
+
+    el.banner    = container.querySelector('#' + p + '-banner');
+    el.tableDiv  = container.querySelector('#' + p + '-table');
+    el.inspector = container.querySelector('#' + p + '-inspector');
+    el.date      = container.querySelector('#' + p + '-date');
+
+    var tbl = document.createElement('table');
+    tbl.className = 'inspection-table';
+    var cg = document.createElement('colgroup');
+    [['col-location','22%'],['','13%'],['','13%'],['','13%'],['','13%'],['','13%'],['col-status','13%']].forEach(function(cc) {
+      var col = document.createElement('col');
+      if (cc[0]) col.className = cc[0];
+      col.style.width = cc[1];
+      cg.appendChild(col);
+    });
+    tbl.appendChild(cg);
+    var hr = tbl.createTHead().insertRow();
+    ['Section', 'Arc Top', 'Mid Upper', 'Mid Lower', 'Arc Bottom', 'Sum', 'Status'].forEach(function(h) {
+      var th = document.createElement('th'); th.textContent = h; hr.appendChild(th);
+    });
+    tbody = tbl.createTBody();
+    el.tableDiv.appendChild(tbl);
+
+    var today = new Date().toISOString().slice(0,10);
+    el.date.value = today; state.date = today;
+    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; });
+    el.date.addEventListener('input', function(e) { state.date = e.target.value; });
+    container.querySelector('#' + p + '-save').addEventListener('click', save);
+    container.querySelector('#' + p + '-reset').addEventListener('click', reset);
+    container.querySelector('#' + p + '-print').addEventListener('click', function() { window.print(); });
+
+    SS_SECTIONS.forEach(function(sec) {
+      var wrap = container.querySelector('#' + p + '-svg-' + sec.id);
+      renderSSSectionSVG(wrap, sec.id, state.measurements, function(ri, pi, val) {
+        state.measurements[sec.id]['r' + ri][pi] = val;
+        update();
+      });
+    });
+
+    update();
+  }
+
+  function update() {
+    var results = computeSSResults(state.measurements);
+
+    results.forEach(function(r) {
+      r.rowMaxes.forEach(function(mx, ri) {
+        var maxEl = document.getElementById(p + '-max-' + r.id + '-' + ri);
+        if (maxEl) maxEl.textContent = mx !== null ? mx.toFixed(4) + '"' : '—';
+      });
+      var sumEl = document.getElementById(p + '-sum-' + r.id);
+      var stsEl = document.getElementById(p + '-sts-' + r.id);
+      var card  = document.getElementById(p + '-sec-' + r.id);
+      if (sumEl) sumEl.textContent = r.sum !== null ? r.sum.toFixed(4) + '"' : '—';
+      if (stsEl) { stsEl.textContent = r.status ? r.status.label : '—'; stsEl.style.color = r.status ? r.status.color : ''; }
+      if (card)  card.style.borderColor = r.status && r.status.key !== 'normal' ? r.status.color : '';
+    });
+
+    var valid = results.filter(function(r) { return r.sum !== null; });
+    var overall = valid.length ? getSSStatus(Math.max.apply(null, valid.map(function(r) { return r.sum; }))) : { key: 'normal', label: '—' };
+    el.banner.textContent = overall.label;
+    el.banner.className = 'status-banner s-' + overall.key;
+
+    results.forEach(function(r) {
+      var row = tbody.querySelector('tr[data-key="' + r.id + '"]');
+      if (!row) { row = tbody.insertRow(); row.dataset.key = r.id; }
+      row.innerHTML = '';
+      var cells = [r.label].concat(r.rowMaxes.map(function(mx) { return mx !== null ? mx.toFixed(4) + '"' : '—'; }));
+      cells.push(r.sum !== null ? r.sum.toFixed(4) + '"' : '—');
+      cells.push(r.status ? r.status.label : '—');
+      cells.forEach(function(t) { row.insertCell().textContent = t; });
+      row.className = r.status && r.status.key !== 'normal' ? 's-' + r.status.key : '';
+    });
+  }
+
+  function save() {
+    var id = storeSave(config.storageKey, { inspector: state.inspector, date: state.date, measurements: JSON.parse(JSON.stringify(state.measurements)) });
+    if (id) showToast('Saving PDF…', 'success');
+    else    showToast('Save failed', 'error');
+    savePDF(config.title, state.date);
+  }
+
+  function reset() {
+    state.measurements = ssEmptyMeasurements();
+    SS_SECTIONS.forEach(function(sec) {
+      var wrap = document.getElementById(p + '-svg-' + sec.id);
+      if (wrap) renderSSSectionSVG(wrap, sec.id, state.measurements, function(ri, pi, val) {
+        state.measurements[sec.id]['r' + ri][pi] = val;
+        update();
+      });
+    });
+    update();
+  }
+
+  return { init: init };
+}
+
+// =============================================================================
 // MODULE REGISTRY & BOOTSTRAP
 // =============================================================================
 
@@ -1306,6 +1569,14 @@ var NAV_GROUPS = [
           storageKey: 'bottom_slipper',
           title:      'Bottom Wobbler \u2014 Slipper / Wear Liner Inspection'
         })
+      },
+      {
+        id:     'bottom-sliding-shoe',
+        label:  'Sliding Shoe',
+        module: createSlidingShoeModule({
+          storageKey: 'bottom_sliding_shoe',
+          title:      'Bottom Wobbler \u2014 Sliding Shoe Inspection'
+        })
       }
     ]
   },
@@ -1335,6 +1606,14 @@ var NAV_GROUPS = [
         module: createSlipperModule({
           storageKey: 'top_slipper',
           title:      'Top Wobbler \u2014 Slipper / Wear Liner Inspection'
+        })
+      },
+      {
+        id:     'top-sliding-shoe',
+        label:  'Sliding Shoe',
+        module: createSlidingShoeModule({
+          storageKey: 'top_sliding_shoe',
+          title:      'Top Wobbler \u2014 Sliding Shoe Inspection'
         })
       }
     ]
@@ -1399,3 +1678,4 @@ document.addEventListener('DOMContentLoaded', function() {
 
   if (firstTabId) activateTab(firstTabId);
 });
+// PLACEHOLDER
