@@ -1,0 +1,1284 @@
+// =============================================================================
+// CONSTANTS & CALCULATIONS
+// =============================================================================
+
+var NEW_RING = 22.8051;
+
+var LIMITS = {
+  yellow: 0.0294,
+  orange: 0.0591,
+  red:    0.1181
+};
+
+function calcWear(measurement) {
+  return Math.round((measurement - NEW_RING) * 10000) / 10000;
+}
+
+function getStatus(wear) {
+  if (wear >= LIMITS.red)    return { key: 'red',    label: 'Replace Part Now',  color: '#C0392B' };
+  if (wear >= LIMITS.orange) return { key: 'orange', label: 'Have Parts Ready',  color: '#E67E22' };
+  if (wear >= LIMITS.yellow) return { key: 'yellow', label: 'Order Parts',       color: '#F1C40F' };
+  return                            { key: 'normal', label: 'Normal',            color: '#FFFFFF' };
+}
+
+function getOverallStatus(results) {
+  var valid = results.filter(function(r) { return r.wear !== null; });
+  if (!valid.length) return { key: 'normal', label: '\u2014' };
+  var worst = Math.max.apply(null, valid.map(function(r) { return r.wear; }));
+  return getStatus(worst);
+}
+
+function validateMeasurement(val) {
+  if (val === '' || val === null || val === undefined) return { valid: false, number: null };
+  var n = parseFloat(val);
+  if (isNaN(n)) return { valid: false };
+  if (n < NEW_RING - 0.5 || n > NEW_RING + 0.5) return { valid: false, error: 'Out of range' };
+  return { valid: true, number: n };
+}
+
+function fmt4(n) {
+  return (n !== null && !isNaN(n)) ? n.toFixed(4) : '\u2014';
+}
+
+// =============================================================================
+// STORAGE
+// =============================================================================
+
+var STORE_KEY = 'steckel_inspections';
+
+function storeSave(moduleId, data) {
+  try {
+    var raw = localStorage.getItem(STORE_KEY);
+    var store = raw ? JSON.parse(raw) : { version: 1, inspections: [] };
+    var id = moduleId + '_' + Date.now();
+    store.inspections.push({
+      id: id,
+      moduleId: moduleId,
+      timestamp: new Date().toISOString(),
+      data: data
+    });
+    localStorage.setItem(STORE_KEY, JSON.stringify(store));
+    return id;
+  } catch(e) {
+    return null;
+  }
+}
+
+// =============================================================================
+// TOAST
+// =============================================================================
+
+var _toastTimer;
+
+function showToast(msg, type) {
+  var t = document.getElementById('app-toast');
+  t.textContent = msg;
+  t.className = 'visible t-' + (type || 'info');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function() { t.className = ''; }, 3000);
+}
+
+// =============================================================================
+// PDF SAVE
+// =============================================================================
+
+function savePDF(title, date) {
+  var d = date || new Date().toISOString().slice(0, 10);
+  var filename = title + ' ' + d;
+  var orig = document.title;
+  document.title = filename;
+  setTimeout(function() {
+    window.print();
+    setTimeout(function() { document.title = orig; }, 1000);
+  }, 80);
+}
+
+// =============================================================================
+// FACE RING SVG
+// =============================================================================
+
+var SVG_NS = 'http://www.w3.org/2000/svg';
+var CX = 200, CY = 200, OR = 148, IR = 104;
+var _indicators = {};
+var _readouts = {};
+
+function svgEl(tag, attrs, text) {
+  var n = document.createElementNS(SVG_NS, tag);
+  Object.keys(attrs).forEach(function(k) { n.setAttribute(k, attrs[k]); });
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+function renderFaceRing(container, locations) {
+  _indicators = {};
+  _readouts = {};
+  container.innerHTML = '';
+
+  var svg = svgEl('svg', { viewBox: '0 0 400 400', class: 'face-ring-svg' });
+
+  svg.appendChild(svgEl('circle', { cx: CX, cy: CY, r: OR,  fill: 'none', stroke: '#4A5568', 'stroke-width': 3 }));
+  svg.appendChild(svgEl('circle', { cx: CX, cy: CY, r: IR,  fill: 'none', stroke: '#4A5568', 'stroke-width': 2 }));
+  svg.appendChild(svgEl('circle', { cx: CX, cy: CY, r: 22,  fill: '#1A2535', stroke: '#4A5568', 'stroke-width': 2 }));
+  svg.appendChild(svgEl('text',   { x: CX, y: CY - 4, 'text-anchor': 'middle', fill: '#7F8C8D', 'font-size': 9, 'font-family': 'monospace' }, 'FACE'));
+  svg.appendChild(svgEl('text',   { x: CX, y: CY + 8, 'text-anchor': 'middle', fill: '#7F8C8D', 'font-size': 9, 'font-family': 'monospace' }, 'RING'));
+
+  locations.forEach(function(loc) {
+    var rad  = (loc.angle * Math.PI) / 180;
+    var cosA = Math.cos(rad);
+    var sinA = Math.sin(rad);
+
+    // Dashed axis line spanning the full diameter
+    svg.appendChild(svgEl('line', {
+      x1: CX + cosA * OR, y1: CY - sinA * OR,
+      x2: CX - cosA * OR, y2: CY + sinA * OR,
+      stroke: '#2E3F55', 'stroke-width': 1, 'stroke-dasharray': '4 4'
+    }));
+
+    // Split label into two end-names
+    // "Top Bottom"           -> end1="T"  end2="B"
+    // "Left Right"           -> end1="L"  end2="R"
+    // "Top Left Bottom Right"-> end1="TL" end2="BR"
+    // "Top Right Bottom Left"-> end1="TR" end2="BL"
+    var words = loc.label.split(' ');
+    var half  = words.length / 2;
+    var end1  = words.slice(0, half).map(function(w){ return w[0]; }).join('');
+    var end2  = words.slice(half).map(function(w){ return w[0]; }).join('');
+
+    // Indicator dot sits ON the ring surface at the end1 side
+    var dot = svgEl('circle', {
+      cx: CX + cosA * OR,
+      cy: CY - sinA * OR,
+      r: 10,
+      fill: '#FFFFFF',
+      stroke: '#2C3E50',
+      'stroke-width': 2
+    });
+    svg.appendChild(dot);
+    _indicators[loc.id] = dot;
+
+    var LO = OR + 22;  // label offset — just outside the ring surface
+
+    // Label at end1 (positive direction)
+    svg.appendChild(svgEl('text', {
+      x: CX + cosA * LO,
+      y: CY - sinA * LO,
+      'text-anchor': 'middle', 'dominant-baseline': 'middle',
+      fill: '#95A5A6', 'font-size': 11, 'font-weight': 'bold', 'font-family': 'monospace'
+    }, end1));
+
+    // Label at end2 (opposite end)
+    svg.appendChild(svgEl('text', {
+      x: CX - cosA * LO,
+      y: CY + sinA * LO,
+      'text-anchor': 'middle', 'dominant-baseline': 'middle',
+      fill: '#95A5A6', 'font-size': 11, 'font-weight': 'bold', 'font-family': 'monospace'
+    }, end2));
+
+    // Live measurement readout — just inside the ring near the dot
+    var RO = OR - 20;
+    var anchor = cosA > 0.15 ? 'end' : (cosA < -0.15 ? 'start' : 'middle');
+    var readout = svgEl('text', {
+      x: CX + cosA * RO,
+      y: CY - sinA * RO,
+      'text-anchor': anchor,
+      'dominant-baseline': 'middle',
+      fill: 'transparent',
+      'font-size': 14,
+      'font-family': 'monospace'
+    }, '');
+    svg.appendChild(readout);
+    _readouts[loc.id] = readout;
+  });
+
+  container.appendChild(svg);
+}
+
+function updateSVGColors(colorMap) {
+  Object.keys(colorMap).forEach(function(id) {
+    if (_indicators[id]) _indicators[id].setAttribute('fill', colorMap[id]);
+  });
+}
+
+function updateSVGReadouts(valueMap) {
+  Object.keys(valueMap).forEach(function(id) {
+    if (_readouts[id]) {
+      var val = valueMap[id];
+      _readouts[id].textContent = val || '';
+      _readouts[id].setAttribute('fill', val ? '#E8EDF2' : 'transparent');
+    }
+  });
+}
+
+function shortLabel(label) {
+  return label.split(' ').map(function(w) { return w[0]; }).join('/');
+}
+
+// =============================================================================
+// WOBBLER MODULE
+// =============================================================================
+
+var LOCATIONS = [
+  { id: 'tb',   label: 'Top Bottom',           angle: 90  },
+  { id: 'lr',   label: 'Left Right',            angle: 0   },
+  { id: 'tlbr', label: 'Top Left Bottom Right', angle: 135 },
+  { id: 'trbl', label: 'Top Right Bottom Left', angle: 45  }
+];
+
+// =============================================================================
+// FACE RING MODULE FACTORY
+// Creates an independent Face Ring inspection instance.
+// Each instance has its own state, DOM IDs (prefixed), and save key.
+// This is called once for Bottom Wobbler and once for Top Wobbler.
+// =============================================================================
+
+function createFaceRingModule(config) {
+  // config = { storageKey: 'bottom_wobbler', title: 'Bottom Wobbler — Face Ring Inspection' }
+
+  var p = config.storageKey; // prefix for DOM IDs — keeps instances isolated
+
+  var state = {
+    inspector: '',
+    date: '',
+    measurements: { tb: '', lr: '', tlbr: '', trbl: '' }
+  };
+
+  var el = {};   // cached DOM refs
+  var tbody;
+
+  // ── Build & mount ──────────────────────────────────────────────────────────
+
+  function init(container) {
+    state.measurements = { tb: '', lr: '', tlbr: '', trbl: '' };
+
+    var cardsHTML = LOCATIONS.map(function(loc) {
+      return [
+        '<div class="measurement-card" id="' + p + '-card-' + loc.id + '">',
+        '  <div class="card-label">' + loc.label + '</div>',
+        '  <input id="' + p + '-inp-' + loc.id + '" type="number" step="0.0001"',
+        '    placeholder="' + NEW_RING.toFixed(4) + '" class="card-input" />',
+        '  <div class="card-wear" id="' + p + '-wear-' + loc.id + '">\u2014</div>',
+        '  <div class="card-status" id="' + p + '-stat-' + loc.id + '">\u2014</div>',
+        '</div>'
+      ].join('');
+    }).join('');
+
+    container.innerHTML = [
+      '<div class="module-header">',
+      '  <h2 class="module-title">' + config.title + '</h2>',
+      '  <div class="module-meta">',
+      '    <label class="meta-field">',
+      '      <span>Inspector</span>',
+      '      <input id="' + p + '-inspector" type="text" placeholder="Name" class="meta-input" />',
+      '    </label>',
+      '    <label class="meta-field">',
+      '      <span>Date</span>',
+      '      <input id="' + p + '-date" type="date" class="meta-input" />',
+      '    </label>',
+      '  </div>',
+      '</div>',
+      '<div class="module-body">',
+      '  <div class="ring-panel">',
+      '    <div class="panel-title">Face Ring</div>',
+      '    <div id="' + p + '-svg" class="svg-container"></div>',
+      '    <p class="ring-caption">Nominal diameter: ' + NEW_RING.toFixed(4) + '&Prime;</p>',
+      '  </div>',
+      '  <div class="data-panel">',
+      '    <div id="' + p + '-banner" class="status-banner s-normal">\u2014</div>',
+      '    <div class="measurements-grid">' + cardsHTML + '</div>',
+      '  </div>',
+      '</div>',
+      '<div class="table-section">',
+      '  <div class="panel-title">Inspection Results</div>',
+      '  <div id="' + p + '-table"></div>',
+      '</div>',
+      '<div class="action-bar">',
+      '  <button id="' + p + '-save"  class="btn btn-primary">Save Inspection</button>',
+      '  <button id="' + p + '-reset" class="btn btn-ghost">Reset</button>',
+      '  <button id="' + p + '-print" class="btn btn-ghost">Print Report</button>',
+      '</div>'
+    ].join('');
+
+    // Cache DOM refs
+    el.banner    = container.querySelector('#' + p + '-banner');
+    el.tableDiv  = container.querySelector('#' + p + '-table');
+    el.inspector = container.querySelector('#' + p + '-inspector');
+    el.date      = container.querySelector('#' + p + '-date');
+    el.cards  = {};
+    el.inputs = {};
+    el.wears  = {};
+    el.stats  = {};
+
+    LOCATIONS.forEach(function(loc) {
+      el.cards[loc.id]  = container.querySelector('#' + p + '-card-' + loc.id);
+      el.inputs[loc.id] = container.querySelector('#' + p + '-inp-'  + loc.id);
+      el.wears[loc.id]  = container.querySelector('#' + p + '-wear-' + loc.id);
+      el.stats[loc.id]  = container.querySelector('#' + p + '-stat-' + loc.id);
+    });
+
+    // Build results table
+    var tbl = document.createElement('table');
+    tbl.className = 'inspection-table';
+    var colgroup = document.createElement('colgroup');
+    [
+      { cls: 'col-location',    pct: '35%' },
+      { cls: 'col-measurement', pct: '22%' },
+      { cls: 'col-wear',        pct: '18%' },
+      { cls: 'col-status',      pct: '25%' }
+    ].forEach(function(c) {
+      var col = document.createElement('col');
+      col.className = c.cls;
+      col.style.width = c.pct;
+      colgroup.appendChild(col);
+    });
+    tbl.appendChild(colgroup);
+    var thead = tbl.createTHead();
+    var hr = thead.insertRow();
+    ['Location', 'Measurement', 'Wear', 'Status'].forEach(function(h) {
+      var th = document.createElement('th');
+      th.textContent = h;
+      hr.appendChild(th);
+    });
+    tbody = tbl.createTBody();
+    el.tableDiv.appendChild(tbl);
+
+    // Set today's date
+    var today = new Date().toISOString().slice(0, 10);
+    el.date.value = today;
+    state.date = today;
+
+    // Input listeners
+    LOCATIONS.forEach(function(loc) {
+      el.inputs[loc.id].addEventListener('input', function(e) {
+        state.measurements[loc.id] = e.target.value;
+        update();
+      });
+    });
+
+    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; });
+    el.date.addEventListener('input', function(e) { state.date = e.target.value; });
+
+    container.querySelector('#' + p + '-save').addEventListener('click', save);
+    container.querySelector('#' + p + '-reset').addEventListener('click', reset);
+    container.querySelector('#' + p + '-print').addEventListener('click', function() { window.print(); });
+
+    renderFaceRing(container.querySelector('#' + p + '-svg'), LOCATIONS);
+    update();
+  }
+
+  // ── Update (runs on every input change) ───────────────────────────────────
+
+  function update() {
+    var results = LOCATIONS.map(function(loc) {
+      var v = validateMeasurement(state.measurements[loc.id]);
+      if (!v.valid || v.number === null) {
+        return { id: loc.id, label: loc.label, measurement: null, wear: null, status: null };
+      }
+      var wear = calcWear(v.number);
+      return { id: loc.id, label: loc.label, measurement: v.number, wear: wear, status: getStatus(wear) };
+    });
+
+    // Cards
+    results.forEach(function(r) {
+      el.wears[r.id].textContent = (r.wear !== null) ? fmt4(r.wear) + '"' : '\u2014';
+      if (r.status) {
+        el.stats[r.id].textContent = r.status.label;
+        el.cards[r.id].style.setProperty('--card-accent', r.status.color);
+      } else {
+        el.stats[r.id].textContent = '\u2014';
+        el.cards[r.id].style.setProperty('--card-accent', 'var(--color-border)');
+      }
+    });
+
+    // Table rows
+    results.forEach(function(r) {
+      var row = tbody.querySelector('tr[data-key="' + r.id + '"]');
+      if (!row) { row = tbody.insertRow(); row.dataset.key = r.id; }
+      row.innerHTML = '';
+      [
+        r.label,
+        (r.measurement !== null) ? fmt4(r.measurement) + '"' : '\u2014',
+        (r.wear        !== null) ? fmt4(r.wear) + '"'        : '\u2014',
+        (r.status)               ? r.status.label            : '\u2014'
+      ].forEach(function(text) {
+        row.insertCell().textContent = text;
+      });
+      row.className = (r.status && r.status.key !== 'normal') ? 's-' + r.status.key : '';
+    });
+
+    // Banner
+    var overall = getOverallStatus(results);
+    el.banner.textContent = overall.label;
+    el.banner.className   = 'status-banner s-' + overall.key;
+
+    // SVG dots and readouts
+    var colorMap = {}, readoutMap = {};
+    results.forEach(function(r) {
+      colorMap[r.id]   = r.status ? r.status.color : '#FFFFFF';
+      readoutMap[r.id] = r.measurement !== null ? r.measurement.toFixed(4) : '';
+    });
+    updateSVGColors(colorMap);
+    updateSVGReadouts(readoutMap);
+  }
+
+  // ── Actions ────────────────────────────────────────────────────────────────
+
+  function save() {
+    var id = storeSave(config.storageKey, {
+      inspector: state.inspector,
+      date: state.date,
+      measurements: Object.assign({}, state.measurements)
+    });
+    if (id) showToast('Saving PDF…', 'success');
+    else    showToast('Save failed — storage may be unavailable', 'error');
+    var _t = config.title.replace(' — ', ' ').replace(' Inspection', '').trim();
+    savePDF(_t, state.date);
+  }
+
+  function reset() {
+    state.measurements = { tb: '', lr: '', tlbr: '', trbl: '' };
+    LOCATIONS.forEach(function(loc) {
+      el.inputs[loc.id].value = '';
+    });
+    update();
+  }
+
+  return { init: init };
+}
+
+
+// =============================================================================
+// CENTERING RING MODULE FACTORY
+// Ø365±0.2mm bore — 2 measurement axes: Top/Bottom and Left/Right
+// SVG: simplified ring with 2 axes and indicator dots
+// =============================================================================
+
+var CENTERING_RING_NOMINAL = 11.8189;
+
+var CENTERING_LIMITS = {
+  yellow: 0.0313,
+  orange: 0.0625,
+  red:    0.1250
+};
+
+var CENTERING_LOCATIONS = [
+  { id: 'tb', label: 'Top Bottom', angle: 90 },
+  { id: 'lr', label: 'Left Right', angle: 0  }
+];
+
+function calcCenteringWear(measurement) {
+  return Math.round((measurement - CENTERING_RING_NOMINAL) * 10000) / 10000;
+}
+
+function getCenteringStatus(wear) {
+  if (wear >= CENTERING_LIMITS.red)    return { key: 'red',    label: 'Replace Part Now', color: '#C0392B' };
+  if (wear >= CENTERING_LIMITS.orange) return { key: 'orange', label: 'Have Parts Ready', color: '#E67E22' };
+  if (wear >= CENTERING_LIMITS.yellow) return { key: 'yellow', label: 'Order Parts',      color: '#F1C40F' };
+  return                                      { key: 'normal', label: 'Normal',           color: '#FFFFFF' };
+}
+
+function validateCenteringMeasurement(val) {
+  if (val === '' || val === null || val === undefined) return { valid: false, number: null };
+  var n = parseFloat(val);
+  if (isNaN(n)) return { valid: false };
+  if (n < CENTERING_RING_NOMINAL - 0.5 || n > CENTERING_RING_NOMINAL + 0.5) return { valid: false };
+  return { valid: true, number: n };
+}
+
+var _crIndicators = {};
+var _crReadouts   = {};
+
+function renderCenteringRing(container) {
+  _crIndicators = {};
+  _crReadouts   = {};
+  container.innerHTML = '';
+
+  var svg = svgEl('svg', { viewBox: '0 0 400 400', class: 'face-ring-svg' });
+
+  // Outer ring
+  svg.appendChild(svgEl('circle', { cx: CX, cy: CY, r: 148, fill: 'none', stroke: '#4A5568', 'stroke-width': 3 }));
+  // Inner bore
+  svg.appendChild(svgEl('circle', { cx: CX, cy: CY, r: 80,  fill: 'none', stroke: '#4A5568', 'stroke-width': 2 }));
+  // Hub
+  svg.appendChild(svgEl('circle', { cx: CX, cy: CY, r: 22,  fill: '#1A2535', stroke: '#4A5568', 'stroke-width': 2 }));
+  svg.appendChild(svgEl('text', { x: CX, y: CY - 4, 'text-anchor': 'middle', fill: '#7F8C8D', 'font-size': 9, 'font-family': 'monospace' }, 'CTR'));
+  svg.appendChild(svgEl('text', { x: CX, y: CY + 8, 'text-anchor': 'middle', fill: '#7F8C8D', 'font-size': 9, 'font-family': 'monospace' }, 'RING'));
+
+  // 6 bolt holes equally spaced (as shown in drawing)
+  for (var b = 0; b < 6; b++) {
+    var ba = (b * 60 - 90) * Math.PI / 180;
+    svg.appendChild(svgEl('circle', {
+      cx: CX + Math.cos(ba) * 114,
+      cy: CY + Math.sin(ba) * 114,
+      r: 8, fill: '#1A2535', stroke: '#4A5568', 'stroke-width': 1.5
+    }));
+  }
+
+  CENTERING_LOCATIONS.forEach(function(loc) {
+    var rad  = (loc.angle * Math.PI) / 180;
+    var cosA = Math.cos(rad);
+    var sinA = Math.sin(rad);
+
+    // Dashed axis
+    svg.appendChild(svgEl('line', {
+      x1: CX + cosA * 148, y1: CY - sinA * 148,
+      x2: CX - cosA * 148, y2: CY + sinA * 148,
+      stroke: '#2E3F55', 'stroke-width': 1, 'stroke-dasharray': '4 4'
+    }));
+
+    // End labels
+    var LO = 148 + 22;
+    var words = loc.label.split(' ');
+    svg.appendChild(svgEl('text', {
+      x: CX + cosA * LO, y: CY - sinA * LO,
+      'text-anchor': 'middle', 'dominant-baseline': 'middle',
+      fill: '#95A5A6', 'font-size': 11, 'font-weight': 'bold', 'font-family': 'monospace'
+    }, words[0][0]));
+    svg.appendChild(svgEl('text', {
+      x: CX - cosA * LO, y: CY + sinA * LO,
+      'text-anchor': 'middle', 'dominant-baseline': 'middle',
+      fill: '#95A5A6', 'font-size': 11, 'font-weight': 'bold', 'font-family': 'monospace'
+    }, words[1][0]));
+
+    // Indicator dot
+    var dot = svgEl('circle', {
+      cx: CX + cosA * 148, cy: CY - sinA * 148,
+      r: 10, fill: '#FFFFFF', stroke: '#2C3E50', 'stroke-width': 2
+    });
+    svg.appendChild(dot);
+    _crIndicators[loc.id] = dot;
+
+    // Readout
+    var RO = 148 - 20;
+    var anchor = cosA > 0.15 ? 'end' : (cosA < -0.15 ? 'start' : 'middle');
+    var readout = svgEl('text', {
+      x: CX + cosA * RO, y: CY - sinA * RO,
+      'text-anchor': anchor, 'dominant-baseline': 'middle',
+      fill: 'transparent', 'font-size': 14, 'font-family': 'monospace'
+    }, '');
+    svg.appendChild(readout);
+    _crReadouts[loc.id] = readout;
+  });
+
+  container.appendChild(svg);
+}
+
+function updateCRColors(colorMap) {
+  Object.keys(colorMap).forEach(function(id) {
+    if (_crIndicators[id]) _crIndicators[id].setAttribute('fill', colorMap[id]);
+  });
+}
+
+function updateCRReadouts(valueMap) {
+  Object.keys(valueMap).forEach(function(id) {
+    if (_crReadouts[id]) {
+      var val = valueMap[id];
+      _crReadouts[id].textContent = val || '';
+      _crReadouts[id].setAttribute('fill', val ? '#E8EDF2' : 'transparent');
+    }
+  });
+}
+
+function createCenteringRingModule(config) {
+  var p = config.storageKey;
+
+  var state = {
+    inspector: '',
+    date: '',
+    measurements: { tb: '', lr: '' }
+  };
+
+  var el = {};
+  var tbody;
+
+  function init(container) {
+    state.measurements = { tb: '', lr: '' };
+
+    var cardsHTML = CENTERING_LOCATIONS.map(function(loc) {
+      return [
+        '<div class="measurement-card" id="' + p + '-card-' + loc.id + '">',
+        '  <div class="card-label">' + loc.label + '</div>',
+        '  <input id="' + p + '-inp-' + loc.id + '" type="number" step="0.0001"',
+        '    placeholder="' + CENTERING_RING_NOMINAL.toFixed(4) + '" class="card-input" />',
+        '  <div class="card-wear" id="' + p + '-wear-' + loc.id + '">\u2014</div>',
+        '  <div class="card-status" id="' + p + '-stat-' + loc.id + '">\u2014</div>',
+        '</div>'
+      ].join('');
+    }).join('');
+
+    container.innerHTML = [
+      '<div class="module-header">',
+      '  <h2 class="module-title">' + config.title + '</h2>',
+      '  <div class="module-meta">',
+      '    <label class="meta-field"><span>Inspector</span>',
+      '      <input id="' + p + '-inspector" type="text" placeholder="Name" class="meta-input" /></label>',
+      '    <label class="meta-field"><span>Date</span>',
+      '      <input id="' + p + '-date" type="date" class="meta-input" /></label>',
+      '  </div>',
+      '</div>',
+      '<div class="module-body">',
+      '  <div class="ring-panel">',
+      '    <div class="panel-title">Centering Ring</div>',
+      '    <div id="' + p + '-svg" class="svg-container"></div>',
+      '    <p class="ring-caption">Nominal bore: ' + CENTERING_RING_NOMINAL.toFixed(4) + '&Prime;</p>',
+      '  </div>',
+      '  <div class="data-panel">',
+      '    <div id="' + p + '-banner" class="status-banner s-normal">\u2014</div>',
+      '    <div class="measurements-grid">' + cardsHTML + '</div>',
+      '  </div>',
+      '</div>',
+      '<div class="table-section">',
+      '  <div class="panel-title">Inspection Results</div>',
+      '  <div id="' + p + '-table"></div>',
+      '</div>',
+      '<div class="action-bar">',
+      '  <button id="' + p + '-save"  class="btn btn-primary">Save Inspection</button>',
+      '  <button id="' + p + '-reset" class="btn btn-ghost">Reset</button>',
+      '  <button id="' + p + '-print" class="btn btn-ghost">Print Report</button>',
+      '</div>'
+    ].join('');
+
+    el.banner    = container.querySelector('#' + p + '-banner');
+    el.tableDiv  = container.querySelector('#' + p + '-table');
+    el.inspector = container.querySelector('#' + p + '-inspector');
+    el.date      = container.querySelector('#' + p + '-date');
+    el.cards = {}; el.inputs = {}; el.wears = {}; el.stats = {};
+
+    CENTERING_LOCATIONS.forEach(function(loc) {
+      el.cards[loc.id]  = container.querySelector('#' + p + '-card-' + loc.id);
+      el.inputs[loc.id] = container.querySelector('#' + p + '-inp-'  + loc.id);
+      el.wears[loc.id]  = container.querySelector('#' + p + '-wear-' + loc.id);
+      el.stats[loc.id]  = container.querySelector('#' + p + '-stat-' + loc.id);
+    });
+
+    var tbl = document.createElement('table');
+    tbl.className = 'inspection-table';
+    var cg = document.createElement('colgroup');
+    [['col-location','35%'],['col-measurement','22%'],['col-wear','18%'],['col-status','25%']].forEach(function(c) {
+      var col = document.createElement('col');
+      col.className = c[0]; col.style.width = c[1]; cg.appendChild(col);
+    });
+    tbl.appendChild(cg);
+    var hr = tbl.createTHead().insertRow();
+    ['Location','Measurement','Wear','Status'].forEach(function(h) {
+      var th = document.createElement('th'); th.textContent = h; hr.appendChild(th);
+    });
+    tbody = tbl.createTBody();
+    el.tableDiv.appendChild(tbl);
+
+    var today = new Date().toISOString().slice(0,10);
+    el.date.value = today; state.date = today;
+
+    CENTERING_LOCATIONS.forEach(function(loc) {
+      el.inputs[loc.id].addEventListener('input', function(e) {
+        state.measurements[loc.id] = e.target.value;
+        update();
+      });
+    });
+    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; });
+    el.date.addEventListener('input', function(e) { state.date = e.target.value; });
+    container.querySelector('#' + p + '-save').addEventListener('click', save);
+    container.querySelector('#' + p + '-reset').addEventListener('click', reset);
+    container.querySelector('#' + p + '-print').addEventListener('click', function() { window.print(); });
+
+    renderCenteringRing(container.querySelector('#' + p + '-svg'));
+    update();
+  }
+
+  function update() {
+    var results = CENTERING_LOCATIONS.map(function(loc) {
+      var v = validateCenteringMeasurement(state.measurements[loc.id]);
+      if (!v.valid || v.number === null) return { id: loc.id, label: loc.label, measurement: null, wear: null, status: null };
+      var wear = calcCenteringWear(v.number);
+      return { id: loc.id, label: loc.label, measurement: v.number, wear: wear, status: getCenteringStatus(wear) };
+    });
+
+    results.forEach(function(r) {
+      el.wears[r.id].textContent = r.wear !== null ? fmt4(r.wear) + '"' : '\u2014';
+      if (r.status) {
+        el.stats[r.id].textContent = r.status.label;
+        el.cards[r.id].style.setProperty('--card-accent', r.status.color);
+      } else {
+        el.stats[r.id].textContent = '\u2014';
+        el.cards[r.id].style.setProperty('--card-accent', 'var(--color-border)');
+      }
+    });
+
+    results.forEach(function(r) {
+      var row = tbody.querySelector('tr[data-key="' + r.id + '"]');
+      if (!row) { row = tbody.insertRow(); row.dataset.key = r.id; }
+      row.innerHTML = '';
+      [r.label,
+       r.measurement !== null ? fmt4(r.measurement) + '"' : '\u2014',
+       r.wear !== null ? fmt4(r.wear) + '"' : '\u2014',
+       r.status ? r.status.label : '\u2014'
+      ].forEach(function(t) { row.insertCell().textContent = t; });
+      row.className = r.status && r.status.key !== 'normal' ? 's-' + r.status.key : '';
+    });
+
+    var valid = results.filter(function(r) { return r.wear !== null; });
+    var overall = valid.length
+      ? getCenteringStatus(Math.max.apply(null, valid.map(function(r) { return r.wear; })))
+      : { key: 'normal', label: '\u2014' };
+    el.banner.textContent = overall.label;
+    el.banner.className = 'status-banner s-' + overall.key;
+
+    var colorMap = {}, readoutMap = {};
+    results.forEach(function(r) {
+      colorMap[r.id]   = r.status ? r.status.color : '#FFFFFF';
+      readoutMap[r.id] = r.measurement !== null ? r.measurement.toFixed(4) : '';
+    });
+    updateCRColors(colorMap);
+    updateCRReadouts(readoutMap);
+  }
+
+  function save() {
+    var id = storeSave(config.storageKey, { inspector: state.inspector, date: state.date, measurements: Object.assign({}, state.measurements) });
+    if (id) showToast('Saving PDF…', 'success');
+    else    showToast('Save failed', 'error');
+    var _t = config.title.replace(' — ', ' ').replace(' Inspection', '').trim();
+    savePDF(_t, state.date);
+  }
+
+  function reset() {
+    state.measurements = { tb: '', lr: '' };
+    CENTERING_LOCATIONS.forEach(function(loc) { el.inputs[loc.id].value = ''; });
+    update();
+  }
+
+  return { init: init };
+}
+
+// =============================================================================
+// SLIPPER / WEAR LINER MODULE FACTORY
+// Rectangular pad — 6 bolt locations in a 2-column × 3-row grid
+// Columns: Drive Side (DS) / Operator Side (OS) — rows: Front / Center / Back
+// Measurements taken toward the inside at each bolt
+// No nominal — measurements are recorded as absolute thickness readings
+// Status thresholds are based on remaining thickness (lower = more worn)
+// =============================================================================
+
+// Slipper nominal thickness (new): 60mm = 2.3622 inches
+// Replace threshold: worn to 55mm = 2.1654 inches  (wear of 0.1968")
+// Order parts at:   57mm = 2.2441 inches  (wear of 0.1181")
+// Have parts ready: 56mm = 2.2047 inches  (wear of 0.1575")
+// NOTE: for slippers wear = NOMINAL - MEASUREMENT (it gets thinner, not bigger)
+
+var SLIPPER_NOMINAL = 17.3393;
+
+var SLIPPER_LIMITS = {
+  yellow: 0.0246,
+  orange: 0.0492,
+  red:    0.0984
+};
+
+var SLIPPER_LOCATIONS = [
+  { id: 'ft', label: 'Front Top',    row: 0, col: 0 },
+  { id: 'fb', label: 'Front Bottom', row: 0, col: 1 },
+  { id: 'ct', label: 'Center Top',   row: 1, col: 0 },
+  { id: 'cb', label: 'Center Bottom',row: 1, col: 1 },
+  { id: 'bt', label: 'Back Top',     row: 2, col: 0 },
+  { id: 'bb', label: 'Back Bottom',  row: 2, col: 1 }
+];
+
+function calcSlipperWear(measurement) {
+  return Math.round((measurement - SLIPPER_NOMINAL) * 10000) / 10000;
+}
+
+function getSlipperStatus(wear) {
+  if (wear >= SLIPPER_LIMITS.red)    return { key: 'red',    label: 'Replace Part Now', color: '#C0392B' };
+  if (wear >= SLIPPER_LIMITS.orange) return { key: 'orange', label: 'Have Parts Ready', color: '#E67E22' };
+  if (wear >= SLIPPER_LIMITS.yellow) return { key: 'yellow', label: 'Order Parts',      color: '#F1C40F' };
+  return                                    { key: 'normal', label: 'Normal',           color: '#FFFFFF' };
+}
+
+function validateSlipperMeasurement(val) {
+  if (val === '' || val === null || val === undefined) return { valid: false, number: null };
+  var n = parseFloat(val);
+  if (isNaN(n)) return { valid: false };
+  if (n < SLIPPER_NOMINAL - 0.5 || n > SLIPPER_NOMINAL + 0.5) return { valid: false };
+  return { valid: true, number: n };
+}
+
+var _slIndicators = {};
+var _slReadouts   = {};
+
+function renderSlipperSVG(container) {
+  _slIndicators = {};
+  _slReadouts   = {};
+  container.innerHTML = '';
+
+  // True isometric-style brick corner view:
+  //
+  //         fTL ──────────────── rTL
+  //        /|                   /|
+  //       / |   (top face)     / |
+  //     fTR ──────────────── rTR  |   <- top face
+  //      |  |                 |   |
+  //      |  fBL               |  rBL
+  //      | /   (front face)   | /     <- right face has the bolts
+  //     fBR ──────────────── rBR
+  //
+  // Front face  = fTL, fTR, fBR, fBL  (narrow left face)
+  // Top face    = fTL, rTL, rTR, fTR  (recedes upper-right)
+  // Right face  = fTR, rTR, rBR, fBR  (wide, holds 6 bolts)
+
+  var VW = 560, VH = 360;
+  var svg = svgEl('svg', { viewBox: '0 0 ' + VW + ' ' + VH, class: 'face-ring-svg slipper-svg' });
+
+  // Slab dimensions in SVG units
+  var FW  = 42;    // front face width  (narrow — short end of slab)
+  var FH  = 210;   // front face height (tall)
+  var RW  = 320;   // right face width  (long dimension of slab)
+  // recession angle: going right and slightly up
+  var SX  = RW;    // x offset to recession point
+  var SY  = -70;   // y offset to recession point (negative = up)
+
+  // Anchor: front face bottom-left corner
+  var AX = 58, AY = 295;
+
+  // Front face corners
+  var fBL = { x: AX,        y: AY       };
+  var fBR = { x: AX + FW,   y: AY       };
+  var fTR = { x: AX + FW,   y: AY - FH  };
+  var fTL = { x: AX,        y: AY - FH  };
+
+  // Right face corners (recession from front-right edge)
+  var rBR = { x: fBR.x + SX, y: fBR.y + SY };
+  var rTR = { x: fTR.x + SX, y: fTR.y + SY };
+  var rTL = fTR;   // shared with front face top-right
+  var rBL = fBR;   // shared with front face bottom-right
+
+  // Top face corners
+  var tFL = fTL;
+  var tFR = fTR;
+  var tBR = rTR;
+  var tBL = { x: fTL.x + SX, y: fTL.y + SY };
+
+  function pts(arr) {
+    return arr.map(function(p) { return p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
+  }
+
+  // Draw back-to-front
+
+  // Top face (darkest — recedes away from viewer)
+  svg.appendChild(svgEl('polygon', {
+    points: pts([tFL, tFR, tBR, tBL]),
+    fill: '#0F1A28', stroke: '#3A4F65', 'stroke-width': 1.5
+  }));
+
+  // Front face (medium — narrow left face)
+  svg.appendChild(svgEl('polygon', {
+    points: pts([fBL, fBR, fTR, fTL]),
+    fill: '#162030', stroke: '#4A5568', 'stroke-width': 2
+  }));
+
+  // Right face (lightest — faces viewer, holds bolts)
+  svg.appendChild(svgEl('polygon', {
+    points: pts([rBL, rBR, rTR, rTL]),
+    fill: '#1E2E45', stroke: '#4A5568', 'stroke-width': 2
+  }));
+
+  // Bilinear interpolation across the right face
+  // u = 0..1  bottom → top      (maps to rows: Front/Center/Back)
+  // v = 0..1  left → right      (maps to cols: Top/Bottom)
+  function facePoint(u, v) {
+    var left  = { x: rBL.x + u * (rTL.x - rBL.x), y: rBL.y + u * (rTL.y - rBL.y) };
+    var right = { x: rBR.x + u * (rTR.x - rBR.x), y: rBR.y + u * (rTR.y - rBR.y) };
+    return {
+      x: left.x + v * (right.x - left.x),
+      y: left.y + v * (right.y - left.y)
+    };
+  }
+
+  // Dashed row dividers (split Front/Center/Back — horizontal on the right face)
+  [1/3, 2/3].forEach(function(u) {
+    var p0 = facePoint(u, 0.02), p1 = facePoint(u, 0.98);
+    svg.appendChild(svgEl('line', {
+      x1: p0.x.toFixed(1), y1: p0.y.toFixed(1),
+      x2: p1.x.toFixed(1), y2: p1.y.toFixed(1),
+      stroke: '#2E3F55', 'stroke-width': 1, 'stroke-dasharray': '6 3'
+    }));
+  });
+
+  // Dashed column divider (split Top/Bottom — vertical on the right face)
+  var d0 = facePoint(0.02, 0.5), d1 = facePoint(0.98, 0.5);
+  svg.appendChild(svgEl('line', {
+    x1: d0.x.toFixed(1), y1: d0.y.toFixed(1),
+    x2: d1.x.toFixed(1), y2: d1.y.toFixed(1),
+    stroke: '#2E3F55', 'stroke-width': 1, 'stroke-dasharray': '6 3'
+  }));
+
+  // Row labels: FRONT / CENTER / BACK — right side of right face
+  ['FRONT', 'CENTER', 'BACK'].forEach(function(label, i) {
+    var p = facePoint((i * 2 + 1) / 6, 1);
+    svg.appendChild(svgEl('text', {
+      x: (p.x + 8).toFixed(1), y: p.y.toFixed(1),
+      'text-anchor': 'start', 'dominant-baseline': 'middle',
+      fill: '#7F8C8D', 'font-size': 13, 'font-family': 'monospace', 'font-weight': 'bold'
+    }, label));
+  });
+
+  // Column labels: TOP / BOTTOM — above the right face top edge
+  ['TOP', 'BOTTOM'].forEach(function(label, j) {
+    var p = facePoint(1, (j * 2 + 1) / 4);
+    svg.appendChild(svgEl('text', {
+      x: p.x.toFixed(1), y: (p.y - 12).toFixed(1),
+      'text-anchor': 'middle', 'dominant-baseline': 'middle',
+      fill: '#7F8C8D', 'font-size': 13, 'font-family': 'monospace', 'font-weight': 'bold'
+    }, label));
+  });
+
+  // Bolt holes on the right face
+  // loc.row = 0(Front)/1(Center)/2(Back) → u axis (bottom=front → top=back)
+  // loc.col = 0(Top)  /1(Bottom)         → v axis (left → right)
+  SLIPPER_LOCATIONS.forEach(function(loc) {
+    var u = (loc.row * 2 + 1) / 6;
+    var v = (loc.col * 2 + 1) / 4;
+    var c = facePoint(u, v);
+
+    // Bolt hole — circle (right face is close to vertical so circles work)
+    svg.appendChild(svgEl('circle', {
+      cx: c.x.toFixed(1), cy: c.y.toFixed(1), r: 16,
+      fill: '#0A1220', stroke: '#3A4F65', 'stroke-width': 1.5
+    }));
+    svg.appendChild(svgEl('circle', {
+      cx: c.x.toFixed(1), cy: c.y.toFixed(1), r: 8,
+      fill: '#162030', stroke: '#2E3F55', 'stroke-width': 1.5
+    }));
+    svg.appendChild(svgEl('circle', {
+      cx: c.x.toFixed(1), cy: c.y.toFixed(1), r: 3,
+      fill: '#0A1220', stroke: 'none'
+    }));
+
+    // Status indicator ring
+    var dot = svgEl('circle', {
+      cx: c.x.toFixed(1), cy: c.y.toFixed(1), r: 16,
+      fill: 'none', stroke: '#FFFFFF', 'stroke-width': 2.5
+    });
+    svg.appendChild(dot);
+    _slIndicators[loc.id] = dot;
+
+    // Readout below bolt
+    var readout = svgEl('text', {
+      x: c.x.toFixed(1), y: (c.y + 26).toFixed(1),
+      'text-anchor': 'middle', 'dominant-baseline': 'middle',
+      fill: 'transparent', 'font-size': 13, 'font-family': 'monospace'
+    }, '');
+    svg.appendChild(readout);
+    _slReadouts[loc.id] = readout;
+  });
+
+  // Label on the front face
+  svg.appendChild(svgEl('text', {
+    x: ((fBL.x + fTR.x) / 2).toFixed(1),
+    y: ((fBL.y + fTR.y) / 2).toFixed(1),
+    'text-anchor': 'middle', 'dominant-baseline': 'middle',
+    fill: '#2A3A50', 'font-size': 8, 'font-family': 'monospace', 'font-weight': 'bold',
+    transform: 'rotate(-90 ' + ((fBL.x + fTR.x) / 2).toFixed(1) + ' ' + ((fBL.y + fTR.y) / 2).toFixed(1) + ')'
+  }, 'SLIPPER'));
+
+  container.appendChild(svg);
+}
+
+function updateSlipperColors(colorMap) {
+  Object.keys(colorMap).forEach(function(id) {
+    if (_slIndicators[id]) _slIndicators[id].setAttribute('stroke', colorMap[id]);
+  });
+}
+
+function updateSlipperReadouts(valueMap) {
+  Object.keys(valueMap).forEach(function(id) {
+    if (_slReadouts[id]) {
+      var val = valueMap[id];
+      _slReadouts[id].textContent = val || '';
+      _slReadouts[id].setAttribute('fill', val ? '#E8EDF2' : 'transparent');
+    }
+  });
+}
+
+function createSlipperModule(config) {
+  var p = config.storageKey;
+
+  var emptyMeasurements = function() {
+    var m = {};
+    SLIPPER_LOCATIONS.forEach(function(loc) { m[loc.id] = ''; });
+    return m;
+  };
+
+  var state = { inspector: '', date: '', measurements: emptyMeasurements() };
+  var el = {};
+  var tbody;
+
+  function init(container) {
+    state.measurements = emptyMeasurements();
+
+    // Cards in a 2-col grid matching the slipper layout
+    var cardsHTML = SLIPPER_LOCATIONS.map(function(loc) {
+      return [
+        '<div class="measurement-card" id="' + p + '-card-' + loc.id + '">',
+        '  <div class="card-label">' + loc.label + '</div>',
+        '  <input id="' + p + '-inp-' + loc.id + '" type="number" step="0.0001"',
+        '    placeholder="' + SLIPPER_NOMINAL.toFixed(4) + '" class="card-input" />',
+        '  <div class="card-wear" id="' + p + '-wear-' + loc.id + '">\u2014</div>',
+        '  <div class="card-status" id="' + p + '-stat-' + loc.id + '">\u2014</div>',
+        '</div>'
+      ].join('');
+    }).join('');
+
+    container.innerHTML = [
+      '<div class="module-header">',
+      '  <h2 class="module-title">' + config.title + '</h2>',
+      '  <div class="module-meta">',
+      '    <label class="meta-field"><span>Inspector</span>',
+      '      <input id="' + p + '-inspector" type="text" placeholder="Name" class="meta-input" /></label>',
+      '    <label class="meta-field"><span>Date</span>',
+      '      <input id="' + p + '-date" type="date" class="meta-input" /></label>',
+      '  </div>',
+      '</div>',
+      '<div class="module-body">',
+      '  <div class="ring-panel">',
+      '    <div class="panel-title">Slipper / Wear Liner</div>',
+      '    <div id="' + p + '-svg" class="svg-container" style="aspect-ratio:1.556"></div>',
+      '    <p class="ring-caption">Nominal gap: ' + SLIPPER_NOMINAL.toFixed(4) + '&Prime;</p>',
+      '  </div>',
+      '  <div class="data-panel">',
+      '    <div id="' + p + '-banner" class="status-banner s-normal">\u2014</div>',
+      '    <div class="measurements-grid slipper-grid">' + cardsHTML + '</div>',
+      '  </div>',
+      '</div>',
+      '<div class="table-section">',
+      '  <div class="panel-title">Inspection Results</div>',
+      '  <div id="' + p + '-table"></div>',
+      '</div>',
+      '<div class="action-bar">',
+      '  <button id="' + p + '-save"  class="btn btn-primary">Save Inspection</button>',
+      '  <button id="' + p + '-reset" class="btn btn-ghost">Reset</button>',
+      '  <button id="' + p + '-print" class="btn btn-ghost">Print Report</button>',
+      '</div>'
+    ].join('');
+
+    el.banner    = container.querySelector('#' + p + '-banner');
+    el.tableDiv  = container.querySelector('#' + p + '-table');
+    el.inspector = container.querySelector('#' + p + '-inspector');
+    el.date      = container.querySelector('#' + p + '-date');
+    el.cards = {}; el.inputs = {}; el.wears = {}; el.stats = {};
+
+    SLIPPER_LOCATIONS.forEach(function(loc) {
+      el.cards[loc.id]  = container.querySelector('#' + p + '-card-' + loc.id);
+      el.inputs[loc.id] = container.querySelector('#' + p + '-inp-'  + loc.id);
+      el.wears[loc.id]  = container.querySelector('#' + p + '-wear-' + loc.id);
+      el.stats[loc.id]  = container.querySelector('#' + p + '-stat-' + loc.id);
+    });
+
+    var tbl = document.createElement('table');
+    tbl.className = 'inspection-table';
+    var cg = document.createElement('colgroup');
+    [['col-location','35%'],['col-measurement','22%'],['col-wear','18%'],['col-status','25%']].forEach(function(c) {
+      var col = document.createElement('col');
+      col.className = c[0]; col.style.width = c[1]; cg.appendChild(col);
+    });
+    tbl.appendChild(cg);
+    var hr = tbl.createTHead().insertRow();
+    ['Location','Measurement','Wear','Status'].forEach(function(h) {
+      var th = document.createElement('th'); th.textContent = h; hr.appendChild(th);
+    });
+    tbody = tbl.createTBody();
+    el.tableDiv.appendChild(tbl);
+
+    var today = new Date().toISOString().slice(0,10);
+    el.date.value = today; state.date = today;
+
+    SLIPPER_LOCATIONS.forEach(function(loc) {
+      el.inputs[loc.id].addEventListener('input', function(e) {
+        state.measurements[loc.id] = e.target.value;
+        update();
+      });
+    });
+    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; });
+    el.date.addEventListener('input', function(e) { state.date = e.target.value; });
+    container.querySelector('#' + p + '-save').addEventListener('click', save);
+    container.querySelector('#' + p + '-reset').addEventListener('click', reset);
+    container.querySelector('#' + p + '-print').addEventListener('click', function() { window.print(); });
+
+    renderSlipperSVG(container.querySelector('#' + p + '-svg'));
+    update();
+  }
+
+  function update() {
+    var results = SLIPPER_LOCATIONS.map(function(loc) {
+      var v = validateSlipperMeasurement(state.measurements[loc.id]);
+      if (!v.valid || v.number === null) return { id: loc.id, label: loc.label, measurement: null, wear: null, status: null };
+      var wear = calcSlipperWear(v.number);
+      return { id: loc.id, label: loc.label, measurement: v.number, wear: wear, status: getSlipperStatus(wear) };
+    });
+
+    results.forEach(function(r) {
+      el.wears[r.id].textContent = r.wear !== null ? fmt4(r.wear) + '"' : '\u2014';
+      if (r.status) {
+        el.stats[r.id].textContent = r.status.label;
+        el.cards[r.id].style.setProperty('--card-accent', r.status.color);
+      } else {
+        el.stats[r.id].textContent = '\u2014';
+        el.cards[r.id].style.setProperty('--card-accent', 'var(--color-border)');
+      }
+    });
+
+    results.forEach(function(r) {
+      var row = tbody.querySelector('tr[data-key="' + r.id + '"]');
+      if (!row) { row = tbody.insertRow(); row.dataset.key = r.id; }
+      row.innerHTML = '';
+      [r.label,
+       r.measurement !== null ? fmt4(r.measurement) + '"' : '\u2014',
+       r.wear !== null ? fmt4(r.wear) + '"' : '\u2014',
+       r.status ? r.status.label : '\u2014'
+      ].forEach(function(t) { row.insertCell().textContent = t; });
+      row.className = r.status && r.status.key !== 'normal' ? 's-' + r.status.key : '';
+    });
+
+    var valid = results.filter(function(r) { return r.wear !== null; });
+    var overall = valid.length
+      ? getSlipperStatus(Math.max.apply(null, valid.map(function(r) { return r.wear; })))
+      : { key: 'normal', label: '\u2014' };
+    el.banner.textContent = overall.label;
+    el.banner.className = 'status-banner s-' + overall.key;
+
+    var colorMap = {}, readoutMap = {};
+    results.forEach(function(r) {
+      colorMap[r.id]   = r.status ? r.status.color : '#FFFFFF';
+      readoutMap[r.id] = r.measurement !== null ? r.measurement.toFixed(4) : '';
+    });
+    updateSlipperColors(colorMap);
+    updateSlipperReadouts(readoutMap);
+  }
+
+  function save() {
+    var id = storeSave(config.storageKey, { inspector: state.inspector, date: state.date, measurements: Object.assign({}, state.measurements) });
+    if (id) showToast('Saving PDF…', 'success');
+    else    showToast('Save failed', 'error');
+    var _t = config.title.replace(' — ', ' ').replace(' Inspection', '').trim();
+    savePDF(_t, state.date);
+  }
+
+  function reset() {
+    state.measurements = emptyMeasurements();
+    SLIPPER_LOCATIONS.forEach(function(loc) { el.inputs[loc.id].value = ''; });
+    update();
+  }
+
+  return { init: init };
+}
+
+// =============================================================================
+// MODULE REGISTRY & BOOTSTRAP
+// =============================================================================
+
+// Each entry defines a parent group and its sub-tabs.
+// Adding a new sub-module = add one entry to the tabs array.
+var NAV_GROUPS = [
+  {
+    label: 'Bottom Wobbler',
+    tabs: [
+      {
+        id:     'bottom-face-ring',
+        label:  'Face Ring',
+        module: createFaceRingModule({
+          storageKey: 'bottom_face_ring',
+          title:      'Bottom Wobbler \u2014 Face Ring Inspection'
+        })
+      },
+      {
+        id:     'bottom-centering-ring',
+        label:  'Centering Ring',
+        module: createCenteringRingModule({
+          storageKey: 'bottom_centering_ring',
+          title:      'Bottom Wobbler \u2014 Centering Ring Inspection'
+        })
+      },
+      {
+        id:     'bottom-slipper',
+        label:  'Slipper',
+        module: createSlipperModule({
+          storageKey: 'bottom_slipper',
+          title:      'Bottom Wobbler \u2014 Slipper / Wear Liner Inspection'
+        })
+      }
+    ]
+  },
+  {
+    label: 'Top Wobbler',
+    tabs: [
+      {
+        id:     'top-face-ring',
+        label:  'Face Ring',
+        module: createFaceRingModule({
+          storageKey: 'top_face_ring',
+          title:      'Top Wobbler \u2014 Face Ring Inspection'
+        })
+      },
+      {
+        id:     'top-centering-ring',
+        label:  'Centering Ring',
+        module: createCenteringRingModule({
+          storageKey: 'top_centering_ring',
+          title:      'Top Wobbler \u2014 Centering Ring Inspection'
+        })
+      },
+      {
+        id:     'top-slipper',
+        label:  'Slipper',
+        module: createSlipperModule({
+          storageKey: 'top_slipper',
+          title:      'Top Wobbler \u2014 Slipper / Wear Liner Inspection'
+        })
+      }
+    ]
+  }
+];
+
+// Flat lookup: id -> tab
+var TAB_MAP = {};
+NAV_GROUPS.forEach(function(group) {
+  group.tabs.forEach(function(tab) {
+    TAB_MAP[tab.id] = tab;
+  });
+});
+
+function activateTab(id) {
+  var tab = TAB_MAP[id];
+  if (!tab) return;
+
+  document.querySelectorAll('.sub-tab-btn').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.tabId === id);
+  });
+
+  var container = document.getElementById('module-container');
+  container.innerHTML = '';
+  var wrapper = document.createElement('div');
+  wrapper.className = 'module-wrapper';
+  container.appendChild(wrapper);
+  tab.module.init(wrapper);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  var nav = document.getElementById('module-nav');
+  var firstTabId = null;
+
+  NAV_GROUPS.forEach(function(group) {
+    var groupLabel = document.createElement('div');
+    groupLabel.className = 'nav-group-label';
+    groupLabel.textContent = group.label;
+    nav.appendChild(groupLabel);
+
+    group.tabs.forEach(function(tab) {
+      var btn = document.createElement('button');
+      btn.className = 'sub-tab-btn';
+      btn.dataset.tabId = tab.id;
+      btn.textContent = tab.label;
+      btn.addEventListener('click', function() { activateTab(tab.id); });
+      nav.appendChild(btn);
+      if (!firstTabId) firstTabId = tab.id;
+    });
+  });
+
+  if (firstTabId) activateTab(firstTabId);
+});
