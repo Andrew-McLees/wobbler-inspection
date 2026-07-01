@@ -5,7 +5,7 @@
 var NEW_RING = 22.8051;
 
 var LIMITS = {
-  yellow: 0.0294,
+  yellow: 0.0295,
   orange: 0.0591,
   red:    0.1181
 };
@@ -90,25 +90,62 @@ function showToast(msg, type) {
 // =============================================================================
 
 var MILL_PASSWORD = 'Nucor2024';
-var MILLS = ['SM01', 'SM02', 'SM03', 'SM04'];
-var MILL_KEYS = { bottom: 'steckel_mill_bottom', top: 'steckel_mill_top' };
+var SM_MILLS = ['SM01', 'SM02', 'SM03', 'SM04'];
+var RM_MILLS = ['RM01', 'RM02', 'RM03', 'RM04'];
 
+// groupKey examples: 'steckel_bottom', 'steckel_top', 'rougher_bottom', 'rougher_top'
 function getMillFor(groupKey) {
-  return localStorage.getItem(MILL_KEYS[groupKey]) || (groupKey === 'bottom' ? 'SM01' : 'SM02');
+  var stored = localStorage.getItem('mill_' + groupKey);
+  if (stored) return stored;
+  // Defaults
+  if (groupKey === 'steckel_bottom') return 'SM01';
+  if (groupKey === 'steckel_top')    return 'SM02';
+  if (groupKey === 'rougher_bottom') return 'RM01';
+  if (groupKey === 'rougher_top')    return 'RM02';
+  return 'SM01';
 }
 
 function setMillFor(groupKey, mill) {
-  localStorage.setItem(MILL_KEYS[groupKey], mill);
+  localStorage.setItem('mill_' + groupKey, mill);
+}
+
+function getMillsForGroup(groupKey) {
+  return groupKey.startsWith('rougher') ? RM_MILLS : SM_MILLS;
+}
+
+function getOtherGroupKey(groupKey) {
+  if (groupKey === 'steckel_bottom') return 'steckel_top';
+  if (groupKey === 'steckel_top')    return 'steckel_bottom';
+  if (groupKey === 'rougher_bottom') return 'rougher_top';
+  if (groupKey === 'rougher_top')    return 'rougher_bottom';
+  return groupKey;
+}
+
+function getGroupDisplayName(groupKey) {
+  if (groupKey === 'steckel_bottom') return 'Steckel Bottom Wobbler';
+  if (groupKey === 'steckel_top')    return 'Steckel Top Wobbler';
+  if (groupKey === 'rougher_bottom') return 'Rougher Bottom Wobbler';
+  if (groupKey === 'rougher_top')    return 'Rougher Top Wobbler';
+  return groupKey;
 }
 
 function buildFilename(moduleTitle, date) {
+  // moduleTitle: "Bottom Wobbler — Face Ring Inspection"
+  // or          "Rougher Bottom Wobbler — Face Ring Inspection"
   var parts   = moduleTitle.split(' — ');
   var wobbler = parts[0].trim();
   var module  = parts[1] ? parts[1].replace(' Inspection', '').trim() : '';
-  var groupKey = wobbler.toLowerCase().indexOf('bottom') !== -1 ? 'bottom' : 'top';
-  var mill    = getMillFor(groupKey);
+  // Determine groupKey from wobbler name
+  var groupKey = 'steckel_bottom';
+  if (wobbler.toLowerCase().indexOf('rougher') !== -1) {
+    groupKey = wobbler.toLowerCase().indexOf('bottom') !== -1 ? 'rougher_bottom' : 'rougher_top';
+  } else {
+    groupKey = wobbler.toLowerCase().indexOf('bottom') !== -1 ? 'steckel_bottom' : 'steckel_top';
+  }
+  var mill = getMillFor(groupKey);
+  var prefix = groupKey.startsWith('rougher') ? 'Rougher' : 'Steckel';
   var d = date || new Date().toISOString().slice(0, 10);
-  return mill + ' Steckel ' + wobbler + ' - ' + module + ' - ' + d;
+  return mill + ' ' + prefix + ' ' + wobbler + ' - ' + module + ' - ' + d;
 }
 
 function savePDF(moduleTitle, date) {
@@ -122,7 +159,7 @@ function savePDF(moduleTitle, date) {
 }
 
 function getNavGroupLabel(groupKey) {
-  return getMillFor(groupKey) + ' Steckel ' + (groupKey === 'bottom' ? 'Bottom Wobbler' : 'Top Wobbler');
+  return getMillFor(groupKey) + ' ' + getGroupDisplayName(groupKey);
 }
 
 function openMillModal(groupKey, textNode) {
@@ -168,18 +205,19 @@ function checkMillPassword(groupKey, textNode) {
     input.focus();
     return;
   }
-  var otherKey  = groupKey === 'bottom' ? 'top' : 'bottom';
+  var otherKey  = getOtherGroupKey(groupKey);
   var otherMill = getMillFor(otherKey);
-  var available = MILLS.filter(function(m) { return m !== otherMill; });
+  var available = getMillsForGroup(groupKey).filter(function(m) { return m !== otherMill; });
 
   var overlay = document.getElementById('mill-modal-overlay');
   overlay.querySelector('.mill-modal').innerHTML = [
     '<div class="mill-modal-title">Select Mill — ' + (groupKey === 'bottom' ? 'Bottom' : 'Top') + ' Wobbler</div>',
-    '<div class="mill-modal-sub">' + (groupKey === 'bottom' ? 'Top' : 'Bottom') + ' Wobbler is using ' + otherMill + '</div>',
+    '<div class="mill-modal-sub">' + getGroupDisplayName(getOtherGroupKey(groupKey)) + ' is using ' + otherMill + '</div>',
     '<div class="mill-modal-mills">',
     available.map(function(m) {
       var cls = m === getMillFor(groupKey) ? ' mill-btn-active' : '';
-      return '<button class="mill-btn' + cls + '" data-mill="' + m + '">' + m + ' Steckel</button>';
+      var millLabel = m.startsWith('RM') ? m + ' Rougher' : m + ' Steckel';
+      return '<button class="mill-btn' + cls + '" data-mill="' + m + '">' + millLabel + '</button>';
     }).join(''),
     '</div>',
     '<div class="mill-modal-btns">',
@@ -192,7 +230,7 @@ function checkMillPassword(groupKey, textNode) {
       setMillFor(groupKey, btn.dataset.mill);
       if (textNode) textNode.nodeValue = getNavGroupLabel(groupKey) + ' ';
       overlay.remove();
-      showToast((groupKey === 'bottom' ? 'Bottom' : 'Top') + ' Wobbler set to ' + btn.dataset.mill, 'success');
+      showToast(getGroupDisplayName(groupKey) + ' set to ' + btn.dataset.mill, 'success');
     });
   });
   document.getElementById('mill-select-cancel').addEventListener('click', function() {
@@ -343,6 +381,8 @@ function createFaceRingModule(config) {
 
   var p = config.storageKey; // prefix for DOM IDs — keeps instances isolated
 
+  var NOM = config.nominal || NEW_RING;  // per-instance nominal
+
   var state = {
     inspector: '',
     date: '',
@@ -351,6 +391,14 @@ function createFaceRingModule(config) {
 
   var el = {};   // cached DOM refs
   var tbody;
+
+  function calcWearLocal(m) { return Math.round((m - NOM) * 10000) / 10000; }
+  function validateLocal(val) {
+    if (val === '' || val === null || val === undefined) return { valid: false, number: null };
+    var n = parseFloat(val);
+    if (isNaN(n) || n < NOM - 1.0 || n > NOM + 1.0) return { valid: false };
+    return { valid: true, number: n };
+  }
 
   // ── Build & mount ──────────────────────────────────────────────────────────
 
@@ -362,7 +410,7 @@ function createFaceRingModule(config) {
         '<div class="measurement-card" id="' + p + '-card-' + loc.id + '">',
         '  <div class="card-label">' + loc.label + '</div>',
         '  <input id="' + p + '-inp-' + loc.id + '" type="number" step="0.0001"',
-        '    placeholder="' + NEW_RING.toFixed(4) + '" class="card-input" />',
+        '    placeholder="' + NOM.toFixed(4) + '" class="card-input" />',
         '  <div class="card-wear" id="' + p + '-wear-' + loc.id + '">\u2014</div>',
         '  <div class="card-status" id="' + p + '-stat-' + loc.id + '">\u2014</div>',
         '</div>'
@@ -387,7 +435,7 @@ function createFaceRingModule(config) {
       '  <div class="ring-panel">',
       '    <div class="panel-title">Face Ring</div>',
       '    <div id="' + p + '-svg" class="svg-container"></div>',
-      '    <p class="ring-caption">Nominal diameter: ' + NEW_RING.toFixed(4) + '&Prime;</p>',
+      '    <p class="ring-caption">Nominal diameter: ' + NOM.toFixed(4) + '&Prime;</p>',
       '  </div>',
       '  <div class="data-panel">',
       '    <div id="' + p + '-banner" class="status-banner s-normal">\u2014</div>',
@@ -476,11 +524,11 @@ function createFaceRingModule(config) {
 
   function update() {
     var results = LOCATIONS.map(function(loc) {
-      var v = validateMeasurement(state.measurements[loc.id]);
+      var v = validateLocal(state.measurements[loc.id]);
       if (!v.valid || v.number === null) {
         return { id: loc.id, label: loc.label, measurement: null, wear: null, status: null };
       }
-      var wear = calcWear(v.number);
+      var wear = calcWearLocal(v.number);
       return { id: loc.id, label: loc.label, measurement: v.number, wear: wear, status: getStatus(wear) };
     });
 
@@ -686,6 +734,7 @@ function updateCRReadouts(valueMap) {
 
 function createCenteringRingModule(config) {
   var p = config.storageKey;
+  var NOM_CR = config.nominal || CENTERING_RING_NOMINAL;
 
   var state = {
     inspector: '',
@@ -704,7 +753,7 @@ function createCenteringRingModule(config) {
         '<div class="measurement-card" id="' + p + '-card-' + loc.id + '">',
         '  <div class="card-label">' + loc.label + '</div>',
         '  <input id="' + p + '-inp-' + loc.id + '" type="number" step="0.0001"',
-        '    placeholder="' + CENTERING_RING_NOMINAL.toFixed(4) + '" class="card-input" />',
+        '    placeholder="' + NOM_CR.toFixed(4) + '" class="card-input" />',
         '  <div class="card-wear" id="' + p + '-wear-' + loc.id + '">\u2014</div>',
         '  <div class="card-status" id="' + p + '-stat-' + loc.id + '">\u2014</div>',
         '</div>'
@@ -725,7 +774,7 @@ function createCenteringRingModule(config) {
       '  <div class="ring-panel">',
       '    <div class="panel-title">Centering Ring</div>',
       '    <div id="' + p + '-svg" class="svg-container"></div>',
-      '    <p class="ring-caption">Nominal bore: ' + CENTERING_RING_NOMINAL.toFixed(4) + '&Prime;</p>',
+      '    <p class="ring-caption">Nominal bore: ' + NOM_CR.toFixed(4) + '&Prime;</p>',
       '  </div>',
       '  <div class="data-panel">',
       '    <div id="' + p + '-banner" class="status-banner s-normal">\u2014</div>',
@@ -792,9 +841,13 @@ function createCenteringRingModule(config) {
 
   function update() {
     var results = CENTERING_LOCATIONS.map(function(loc) {
-      var v = validateCenteringMeasurement(state.measurements[loc.id]);
+      var v = (function(val) {
+        if (val === '' || val === null || val === undefined) return { valid: false, number: null };
+        var n = parseFloat(val); if (isNaN(n) || n < NOM_CR - 0.5 || n > NOM_CR + 0.5) return { valid: false };
+        return { valid: true, number: n };
+      })(state.measurements[loc.id]);
       if (!v.valid || v.number === null) return { id: loc.id, label: loc.label, measurement: null, wear: null, status: null };
-      var wear = calcCenteringWear(v.number);
+      var wear = Math.round((v.number - NOM_CR) * 10000) / 10000;
       return { id: loc.id, label: loc.label, measurement: v.number, wear: wear, status: getCenteringStatus(wear) };
     });
 
@@ -1103,6 +1156,7 @@ function updateSlipperReadouts(valueMap) {
 
 function createSlipperModule(config) {
   var p = config.storageKey;
+  var NOM_SL = config.nominal || SLIPPER_NOMINAL;
 
   var emptyMeasurements = function() {
     var m = {};
@@ -1123,7 +1177,7 @@ function createSlipperModule(config) {
         '<div class="measurement-card" id="' + p + '-card-' + loc.id + '">',
         '  <div class="card-label">' + loc.label + '</div>',
         '  <input id="' + p + '-inp-' + loc.id + '" type="number" step="0.0001"',
-        '    placeholder="' + SLIPPER_NOMINAL.toFixed(4) + '" class="card-input" />',
+        '    placeholder="' + NOM_SL.toFixed(4) + '" class="card-input" />',
         '  <div class="card-wear" id="' + p + '-wear-' + loc.id + '">\u2014</div>',
         '  <div class="card-status" id="' + p + '-stat-' + loc.id + '">\u2014</div>',
         '</div>'
@@ -1144,7 +1198,7 @@ function createSlipperModule(config) {
       '  <div class="ring-panel">',
       '    <div class="panel-title">Slipper / Wear Liner</div>',
       '    <div id="' + p + '-svg" class="svg-container" style="aspect-ratio:1.556"></div>',
-      '    <p class="ring-caption">Nominal gap: ' + SLIPPER_NOMINAL.toFixed(4) + '&Prime;</p>',
+      '    <p class="ring-caption">Nominal gap: ' + NOM_SL.toFixed(4) + '&Prime;</p>',
       '  </div>',
       '  <div class="data-panel">',
       '    <div id="' + p + '-banner" class="status-banner s-normal">\u2014</div>',
@@ -1211,9 +1265,13 @@ function createSlipperModule(config) {
 
   function update() {
     var results = SLIPPER_LOCATIONS.map(function(loc) {
-      var v = validateSlipperMeasurement(state.measurements[loc.id]);
+      var v = (function(val) {
+        if (val === '' || val === null || val === undefined) return { valid: false, number: null };
+        var n = parseFloat(val); if (isNaN(n) || n < NOM_SL - 0.5 || n > NOM_SL + 0.5) return { valid: false };
+        return { valid: true, number: n };
+      })(state.measurements[loc.id]);
       if (!v.valid || v.number === null) return { id: loc.id, label: loc.label, measurement: null, wear: null, status: null };
-      var wear = calcSlipperWear(v.number);
+      var wear = Math.round((v.number - NOM_SL) * 10000) / 10000;
       return { id: loc.id, label: loc.label, measurement: v.number, wear: wear, status: getSlipperStatus(wear) };
     });
 
@@ -1541,17 +1599,44 @@ function createSlidingShoeModule(config) {
 
 // Each entry defines a parent group and its sub-tabs.
 // Adding a new sub-module = add one entry to the tabs array.
+var ROUGHER_FR_NOMINAL  = 27.8051;
+var ROUGHER_CR_NOMINAL  = 13.2953;
+var ROUGHER_SL_NOMINAL  = 20.0953;
+
 var NAV_GROUPS = [
+  // ── Rougher Mill ──────────────────────────────────────────────────────────
+  {
+    label: 'Rougher Bottom Wobbler',
+    key: 'rougher_bottom',
+    tabs: [
+      { id: 'rougher-bottom-face-ring',     label: 'Face Ring',     module: createFaceRingModule({     storageKey: 'rougher_bottom_face_ring',     title: 'Rougher Bottom Wobbler — Face Ring Inspection',     nominal: ROUGHER_FR_NOMINAL }) },
+      { id: 'rougher-bottom-centering-ring',label: 'Centering Ring',module: createCenteringRingModule({ storageKey: 'rougher_bottom_centering_ring',title: 'Rougher Bottom Wobbler — Centering Ring Inspection',nominal: ROUGHER_CR_NOMINAL }) },
+      { id: 'rougher-bottom-slipper',       label: 'Slipper',       module: createSlipperModule({       storageKey: 'rougher_bottom_slipper',       title: 'Rougher Bottom Wobbler — Slipper Inspection',       nominal: ROUGHER_SL_NOMINAL }) },
+      { id: 'rougher-bottom-sliding-shoe',  label: 'Sliding Shoe',  module: createSlidingShoeModule({   storageKey: 'rougher_bottom_sliding_shoe',  title: 'Rougher Bottom Wobbler — Sliding Shoe Inspection' }) }
+    ]
+  },
+  {
+    label: 'Rougher Top Wobbler',
+    key: 'rougher_top',
+    tabs: [
+      { id: 'rougher-top-face-ring',        label: 'Face Ring',     module: createFaceRingModule({     storageKey: 'rougher_top_face_ring',        title: 'Rougher Top Wobbler — Face Ring Inspection',        nominal: ROUGHER_FR_NOMINAL }) },
+      { id: 'rougher-top-centering-ring',   label: 'Centering Ring',module: createCenteringRingModule({ storageKey: 'rougher_top_centering_ring',   title: 'Rougher Top Wobbler — Centering Ring Inspection',   nominal: ROUGHER_CR_NOMINAL }) },
+      { id: 'rougher-top-slipper',          label: 'Slipper',       module: createSlipperModule({       storageKey: 'rougher_top_slipper',          title: 'Rougher Top Wobbler — Slipper Inspection',          nominal: ROUGHER_SL_NOMINAL }) },
+      { id: 'rougher-top-sliding-shoe',     label: 'Sliding Shoe',  module: createSlidingShoeModule({   storageKey: 'rougher_top_sliding_shoe',     title: 'Rougher Top Wobbler — Sliding Shoe Inspection' }) }
+    ]
+  },
+  // ── Steckel Mill ──────────────────────────────────────────────────────────
   {
     label: 'Bottom Wobbler',
-    key: 'bottom',
+    key: 'steckel_bottom',
     tabs: [
       {
         id:     'bottom-face-ring',
         label:  'Face Ring',
         module: createFaceRingModule({
           storageKey: 'bottom_face_ring',
-          title:      'Bottom Wobbler \u2014 Face Ring Inspection'
+          title:      'Bottom Wobbler \u2014 Face Ring Inspection',
+          nominal:    NEW_RING
         })
       },
       {
@@ -1559,7 +1644,8 @@ var NAV_GROUPS = [
         label:  'Centering Ring',
         module: createCenteringRingModule({
           storageKey: 'bottom_centering_ring',
-          title:      'Bottom Wobbler \u2014 Centering Ring Inspection'
+          title:      'Bottom Wobbler \u2014 Centering Ring Inspection',
+          nominal:    CENTERING_RING_NOMINAL
         })
       },
       {
@@ -1567,7 +1653,8 @@ var NAV_GROUPS = [
         label:  'Slipper',
         module: createSlipperModule({
           storageKey: 'bottom_slipper',
-          title:      'Bottom Wobbler \u2014 Slipper / Wear Liner Inspection'
+          title:      'Bottom Wobbler \u2014 Slipper / Wear Liner Inspection',
+          nominal:    SLIPPER_NOMINAL
         })
       },
       {
@@ -1582,14 +1669,15 @@ var NAV_GROUPS = [
   },
   {
     label: 'Top Wobbler',
-    key: 'top',
+    key: 'steckel_top',
     tabs: [
       {
         id:     'top-face-ring',
         label:  'Face Ring',
         module: createFaceRingModule({
           storageKey: 'top_face_ring',
-          title:      'Top Wobbler \u2014 Face Ring Inspection'
+          title:      'Top Wobbler \u2014 Face Ring Inspection',
+          nominal:    NEW_RING
         })
       },
       {
@@ -1597,7 +1685,8 @@ var NAV_GROUPS = [
         label:  'Centering Ring',
         module: createCenteringRingModule({
           storageKey: 'top_centering_ring',
-          title:      'Top Wobbler \u2014 Centering Ring Inspection'
+          title:      'Top Wobbler \u2014 Centering Ring Inspection',
+          nominal:    CENTERING_RING_NOMINAL
         })
       },
       {
@@ -1605,7 +1694,8 @@ var NAV_GROUPS = [
         label:  'Slipper',
         module: createSlipperModule({
           storageKey: 'top_slipper',
-          title:      'Top Wobbler \u2014 Slipper / Wear Liner Inspection'
+          title:      'Top Wobbler \u2014 Slipper / Wear Liner Inspection',
+          nominal:    SLIPPER_NOMINAL
         })
       },
       {
