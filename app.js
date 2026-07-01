@@ -82,25 +82,31 @@ function showToast(msg, type) {
 // PDF SAVE
 // =============================================================================
 
-// Mill number stored in localStorage, persists across sessions
-var MILL_PASSWORD = 'Nucor2024';  // <-- change this to your preferred password
-var MILLS = ['SM01', 'SM02', 'SM03', 'SM04'];
+// =============================================================================
+// MILL ASSIGNMENT SYSTEM
+// Each wobbler (Bottom / Top) has its own mill number.
+// Bottom and Top cannot share the same mill number.
+// Persists in localStorage. Password required to change.
+// =============================================================================
 
-function getCurrentMill() {
-  return localStorage.getItem('steckel_mill') || 'SM01';
+var MILL_PASSWORD = 'Nucor2024';
+var MILLS = ['SM01', 'SM02', 'SM03', 'SM04'];
+var MILL_KEYS = { bottom: 'steckel_mill_bottom', top: 'steckel_mill_top' };
+
+function getMillFor(groupKey) {
+  return localStorage.getItem(MILL_KEYS[groupKey]) || (groupKey === 'bottom' ? 'SM01' : 'SM02');
 }
 
-function setMill(mill) {
-  localStorage.setItem('steckel_mill', mill);
+function setMillFor(groupKey, mill) {
+  localStorage.setItem(MILL_KEYS[groupKey], mill);
 }
 
 function buildFilename(moduleTitle, date) {
-  // moduleTitle e.g. "Bottom Wobbler — Face Ring Inspection"
-  // Output: "SM01 Steckel Bottom Wobbler - Face Ring - 2026-06-29"
-  var mill = getCurrentMill();
-  var parts = moduleTitle.split(' — ');
-  var wobbler = parts[0].trim();                              // "Bottom Wobbler"
-  var module  = parts[1] ? parts[1].replace(' Inspection','').trim() : '';  // "Face Ring"
+  var parts   = moduleTitle.split(' — ');
+  var wobbler = parts[0].trim();
+  var module  = parts[1] ? parts[1].replace(' Inspection', '').trim() : '';
+  var groupKey = wobbler.toLowerCase().indexOf('bottom') !== -1 ? 'bottom' : 'top';
+  var mill    = getMillFor(groupKey);
   var d = date || new Date().toISOString().slice(0, 10);
   return mill + ' Steckel ' + wobbler + ' - ' + module + ' - ' + d;
 }
@@ -115,18 +121,11 @@ function savePDF(moduleTitle, date) {
   }, 80);
 }
 
-// ── Mill selector modal ────────────────────────────────────────────────────────
-
-function buildMillUI() {
-  // Header badge showing current mill — click to change
-  var badge = document.getElementById('mill-badge');
-  if (!badge) return;
-  badge.textContent = getCurrentMill() + ' Steckel';
-  badge.addEventListener('click', openMillModal);
+function getNavGroupLabel(groupKey) {
+  return getMillFor(groupKey) + ' Steckel ' + (groupKey === 'bottom' ? 'Bottom Wobbler' : 'Top Wobbler');
 }
 
-function openMillModal() {
-  // Remove any existing modal
+function openMillModal(groupKey, textNode) {
   var existing = document.getElementById('mill-modal-overlay');
   if (existing) existing.remove();
 
@@ -135,10 +134,9 @@ function openMillModal() {
   overlay.className = 'mill-modal-overlay';
   overlay.innerHTML = [
     '<div class="mill-modal">',
-    '  <div class="mill-modal-title">Change Mill Number</div>',
+    '  <div class="mill-modal-title">Change Mill — ' + (groupKey === 'bottom' ? 'Bottom' : 'Top') + ' Wobbler</div>',
     '  <div class="mill-modal-sub">Enter password to unlock</div>',
-    '  <input id="mill-pw-input" type="password" placeholder="Password"',
-    '    class="mill-modal-input" autocomplete="off" />',
+    '  <input id="mill-pw-input" type="password" placeholder="Password" class="mill-modal-input" autocomplete="off" />',
     '  <div id="mill-pw-error" class="mill-modal-error"></div>',
     '  <div class="mill-modal-btns">',
     '    <button id="mill-pw-cancel" class="btn btn-ghost">Cancel</button>',
@@ -151,19 +149,17 @@ function openMillModal() {
   var input = document.getElementById('mill-pw-input');
   input.focus();
 
-  document.getElementById('mill-pw-cancel').addEventListener('click', function() {
-    overlay.remove();
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+  document.getElementById('mill-pw-cancel').addEventListener('click', function() { overlay.remove(); });
+  document.getElementById('mill-pw-submit').addEventListener('click', function() {
+    checkMillPassword(groupKey, textNode);
   });
-  overlay.addEventListener('click', function(e) {
-    if (e.target === overlay) overlay.remove();
-  });
-  document.getElementById('mill-pw-submit').addEventListener('click', checkMillPassword);
   input.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') checkMillPassword();
+    if (e.key === 'Enter') checkMillPassword(groupKey, textNode);
   });
 }
 
-function checkMillPassword() {
+function checkMillPassword(groupKey, textNode) {
   var input = document.getElementById('mill-pw-input');
   var error = document.getElementById('mill-pw-error');
   if (input.value !== MILL_PASSWORD) {
@@ -172,14 +168,18 @@ function checkMillPassword() {
     input.focus();
     return;
   }
-  // Password correct — show mill selector
+  var otherKey  = groupKey === 'bottom' ? 'top' : 'bottom';
+  var otherMill = getMillFor(otherKey);
+  var available = MILLS.filter(function(m) { return m !== otherMill; });
+
   var overlay = document.getElementById('mill-modal-overlay');
   overlay.querySelector('.mill-modal').innerHTML = [
-    '<div class="mill-modal-title">Select Mill</div>',
+    '<div class="mill-modal-title">Select Mill — ' + (groupKey === 'bottom' ? 'Bottom' : 'Top') + ' Wobbler</div>',
+    '<div class="mill-modal-sub">' + (groupKey === 'bottom' ? 'Top' : 'Bottom') + ' Wobbler is using ' + otherMill + '</div>',
     '<div class="mill-modal-mills">',
-    MILLS.map(function(m) {
-      var active = m === getCurrentMill() ? ' mill-btn-active' : '';
-      return '<button class="mill-btn' + active + '" data-mill="' + m + '">' + m + ' Steckel</button>';
+    available.map(function(m) {
+      var cls = m === getMillFor(groupKey) ? ' mill-btn-active' : '';
+      return '<button class="mill-btn' + cls + '" data-mill="' + m + '">' + m + ' Steckel</button>';
     }).join(''),
     '</div>',
     '<div class="mill-modal-btns">',
@@ -189,11 +189,10 @@ function checkMillPassword() {
 
   overlay.querySelectorAll('.mill-btn').forEach(function(btn) {
     btn.addEventListener('click', function() {
-      setMill(btn.dataset.mill);
-      var badge = document.getElementById('mill-badge');
-      if (badge) badge.textContent = btn.dataset.mill + ' Steckel';
+      setMillFor(groupKey, btn.dataset.mill);
+      if (textNode) textNode.nodeValue = getNavGroupLabel(groupKey) + ' ';
       overlay.remove();
-      showToast('Mill set to ' + btn.dataset.mill + ' Steckel', 'success');
+      showToast((groupKey === 'bottom' ? 'Bottom' : 'Top') + ' Wobbler set to ' + btn.dataset.mill, 'success');
     });
   });
   document.getElementById('mill-select-cancel').addEventListener('click', function() {
@@ -1282,6 +1281,7 @@ function createSlipperModule(config) {
 var NAV_GROUPS = [
   {
     label: 'Bottom Wobbler',
+    key: 'bottom',
     tabs: [
       {
         id:     'bottom-face-ring',
@@ -1311,6 +1311,7 @@ var NAV_GROUPS = [
   },
   {
     label: 'Top Wobbler',
+    key: 'top',
     tabs: [
       {
         id:     'top-face-ring',
@@ -1365,15 +1366,24 @@ function activateTab(id) {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-  buildMillUI();
-
   var nav = document.getElementById('module-nav');
   var firstTabId = null;
 
   NAV_GROUPS.forEach(function(group) {
     var groupLabel = document.createElement('div');
     groupLabel.className = 'nav-group-label';
-    groupLabel.textContent = group.label;
+
+    var textNode = document.createTextNode(getNavGroupLabel(group.key) + ' ');
+    var lockBtn  = document.createElement('button');
+    lockBtn.className = 'mill-lock-btn';
+    lockBtn.title = 'Change mill number';
+    lockBtn.textContent = '⚿';
+    lockBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      openMillModal(group.key, textNode);
+    });
+    groupLabel.appendChild(textNode);
+    groupLabel.appendChild(lockBtn);
     nav.appendChild(groupLabel);
 
     group.tabs.forEach(function(tab) {
