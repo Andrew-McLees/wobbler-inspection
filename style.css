@@ -291,6 +291,119 @@ body {
   aspect-ratio: unset;
 }
 
+
+/* ── Mill Badge ─────────────────────────────────────────────────────────────── */
+.app-header {
+  justify-content: space-between;
+}
+.mill-badge {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: .875rem;
+  font-weight: 700;
+  padding: .4rem 1rem;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+  white-space: nowrap;
+  letter-spacing: .03em;
+}
+.mill-badge:hover {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+/* ── Mill Modal ─────────────────────────────────────────────────────────────── */
+.mill-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.6);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mill-modal {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 2rem;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.mill-modal-title {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+.mill-modal-sub {
+  font-size: .875rem;
+  color: var(--color-muted);
+  margin-top: -.5rem;
+}
+.mill-modal-input {
+  width: 100%;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  padding: .6rem .75rem;
+  transition: border-color var(--transition);
+}
+.mill-modal-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+.mill-modal-error {
+  color: var(--color-red);
+  font-size: .8rem;
+  min-height: 1rem;
+}
+.mill-modal-btns {
+  display: flex;
+  gap: .75rem;
+  justify-content: flex-end;
+}
+.mill-modal-mills {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .75rem;
+}
+.mill-btn {
+  padding: .75rem;
+  background: var(--color-surface-2);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: .875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  text-align: center;
+}
+.mill-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+.mill-btn-active {
+  border-color: var(--color-accent);
+  background: rgba(58,123,213,.15);
+  color: var(--color-accent);
+}
+
+/* ── Print: hide mill modal, show badge ─────────────────────────────────────── */
+@media print {
+  .mill-modal-overlay { display: none !important; }
+  .mill-badge { border-color: #000; color: #000; background: transparent; }
+}
+
 /* ── Responsive ─────────────────────────────────────────────────────────────── */
 @media (max-width: 1000px) {
   .module-body { grid-template-columns: 1fr; }

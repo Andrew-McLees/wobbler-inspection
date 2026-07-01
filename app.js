@@ -82,15 +82,123 @@ function showToast(msg, type) {
 // PDF SAVE
 // =============================================================================
 
-function savePDF(title, date) {
+// Mill number stored in localStorage, persists across sessions
+var MILL_PASSWORD = 'Nucor2024';  // <-- change this to your preferred password
+var MILLS = ['SM01', 'SM02', 'SM03', 'SM04'];
+
+function getCurrentMill() {
+  return localStorage.getItem('steckel_mill') || 'SM01';
+}
+
+function setMill(mill) {
+  localStorage.setItem('steckel_mill', mill);
+}
+
+function buildFilename(moduleTitle, date) {
+  // moduleTitle e.g. "Bottom Wobbler — Face Ring Inspection"
+  // Output: "SM01 Steckel Bottom Wobbler - Face Ring - 2026-06-29"
+  var mill = getCurrentMill();
+  var parts = moduleTitle.split(' — ');
+  var wobbler = parts[0].trim();                              // "Bottom Wobbler"
+  var module  = parts[1] ? parts[1].replace(' Inspection','').trim() : '';  // "Face Ring"
   var d = date || new Date().toISOString().slice(0, 10);
-  var filename = title + ' ' + d;
+  return mill + ' Steckel ' + wobbler + ' - ' + module + ' - ' + d;
+}
+
+function savePDF(moduleTitle, date) {
+  var filename = buildFilename(moduleTitle, date);
   var orig = document.title;
   document.title = filename;
   setTimeout(function() {
     window.print();
-    setTimeout(function() { document.title = orig; }, 1000);
+    setTimeout(function() { document.title = orig; }, 1500);
   }, 80);
+}
+
+// ── Mill selector modal ────────────────────────────────────────────────────────
+
+function buildMillUI() {
+  // Header badge showing current mill — click to change
+  var badge = document.getElementById('mill-badge');
+  if (!badge) return;
+  badge.textContent = getCurrentMill() + ' Steckel';
+  badge.addEventListener('click', openMillModal);
+}
+
+function openMillModal() {
+  // Remove any existing modal
+  var existing = document.getElementById('mill-modal-overlay');
+  if (existing) existing.remove();
+
+  var overlay = document.createElement('div');
+  overlay.id = 'mill-modal-overlay';
+  overlay.className = 'mill-modal-overlay';
+  overlay.innerHTML = [
+    '<div class="mill-modal">',
+    '  <div class="mill-modal-title">Change Mill Number</div>',
+    '  <div class="mill-modal-sub">Enter password to unlock</div>',
+    '  <input id="mill-pw-input" type="password" placeholder="Password"',
+    '    class="mill-modal-input" autocomplete="off" />',
+    '  <div id="mill-pw-error" class="mill-modal-error"></div>',
+    '  <div class="mill-modal-btns">',
+    '    <button id="mill-pw-cancel" class="btn btn-ghost">Cancel</button>',
+    '    <button id="mill-pw-submit" class="btn btn-primary">Unlock</button>',
+    '  </div>',
+    '</div>'
+  ].join('');
+  document.body.appendChild(overlay);
+
+  var input = document.getElementById('mill-pw-input');
+  input.focus();
+
+  document.getElementById('mill-pw-cancel').addEventListener('click', function() {
+    overlay.remove();
+  });
+  overlay.addEventListener('click', function(e) {
+    if (e.target === overlay) overlay.remove();
+  });
+  document.getElementById('mill-pw-submit').addEventListener('click', checkMillPassword);
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') checkMillPassword();
+  });
+}
+
+function checkMillPassword() {
+  var input = document.getElementById('mill-pw-input');
+  var error = document.getElementById('mill-pw-error');
+  if (input.value !== MILL_PASSWORD) {
+    error.textContent = 'Incorrect password';
+    input.value = '';
+    input.focus();
+    return;
+  }
+  // Password correct — show mill selector
+  var overlay = document.getElementById('mill-modal-overlay');
+  overlay.querySelector('.mill-modal').innerHTML = [
+    '<div class="mill-modal-title">Select Mill</div>',
+    '<div class="mill-modal-mills">',
+    MILLS.map(function(m) {
+      var active = m === getCurrentMill() ? ' mill-btn-active' : '';
+      return '<button class="mill-btn' + active + '" data-mill="' + m + '">' + m + ' Steckel</button>';
+    }).join(''),
+    '</div>',
+    '<div class="mill-modal-btns">',
+    '  <button id="mill-select-cancel" class="btn btn-ghost">Cancel</button>',
+    '</div>'
+  ].join('');
+
+  overlay.querySelectorAll('.mill-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      setMill(btn.dataset.mill);
+      var badge = document.getElementById('mill-badge');
+      if (badge) badge.textContent = btn.dataset.mill + ' Steckel';
+      overlay.remove();
+      showToast('Mill set to ' + btn.dataset.mill + ' Steckel', 'success');
+    });
+  });
+  document.getElementById('mill-select-cancel').addEventListener('click', function() {
+    overlay.remove();
+  });
 }
 
 // =============================================================================
@@ -430,8 +538,7 @@ function createFaceRingModule(config) {
     });
     if (id) showToast('Saving PDF…', 'success');
     else    showToast('Save failed — storage may be unavailable', 'error');
-    var _t = config.title.replace(' — ', ' ').replace(' Inspection', '').trim();
-    savePDF(_t, state.date);
+    savePDF(config.title, state.date);
   }
 
   function reset() {
@@ -735,8 +842,7 @@ function createCenteringRingModule(config) {
     var id = storeSave(config.storageKey, { inspector: state.inspector, date: state.date, measurements: Object.assign({}, state.measurements) });
     if (id) showToast('Saving PDF…', 'success');
     else    showToast('Save failed', 'error');
-    var _t = config.title.replace(' — ', ' ').replace(' Inspection', '').trim();
-    savePDF(_t, state.date);
+    savePDF(config.title, state.date);
   }
 
   function reset() {
@@ -1155,8 +1261,7 @@ function createSlipperModule(config) {
     var id = storeSave(config.storageKey, { inspector: state.inspector, date: state.date, measurements: Object.assign({}, state.measurements) });
     if (id) showToast('Saving PDF…', 'success');
     else    showToast('Save failed', 'error');
-    var _t = config.title.replace(' — ', ' ').replace(' Inspection', '').trim();
-    savePDF(_t, state.date);
+    savePDF(config.title, state.date);
   }
 
   function reset() {
@@ -1260,6 +1365,8 @@ function activateTab(id) {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+  buildMillUI();
+
   var nav = document.getElementById('module-nav');
   var firstTabId = null;
 
