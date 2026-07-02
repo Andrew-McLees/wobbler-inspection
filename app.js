@@ -1194,7 +1194,7 @@ function createSlipperModule(config) {
       '      <input id="' + p + '-date" type="date" class="meta-input" /></label>',
       '  </div>',
       '</div>',
-      '<div class="module-body">',
+      '<div class="module-body slipper-module">',
       '  <div class="ring-panel">',
       '    <div class="panel-title">Slipper / Wear Liner</div>',
       '    <div id="' + p + '-svg" class="svg-container" style="aspect-ratio:1.556"></div>',

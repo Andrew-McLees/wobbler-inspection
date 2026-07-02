@@ -522,18 +522,64 @@ body {
 .ss-point-input::-webkit-inner-spin-button { -webkit-appearance: none; }
 .ss-point-input[type=number] { -moz-appearance: textfield; }
 
-/* Print */
-@media print {
-  .ss-grid { grid-template-columns: 1fr 1fr; }
-  .ss-section-card { border: 1pt solid #ccc; }
-  .ss-section-title, .ss-row-lbl, .ss-sum-label { color: #000 !important; }
-  .ss-row-max, .ss-sum-val { color: #000 !important; }
-  .ss-point-input { background: #fff; color: #000; border-color: #999; }
-}
+/* SS print rules consolidated into main @media print block above */
 
 @media (max-width: 700px) {
   .ss-grid { grid-template-columns: 1fr; }
   .ss-section-body { grid-template-columns: 1fr; }
+}
+
+
+/* ── Mill Admin Panel ───────────────────────────────────────────────────────── */
+.mill-admin-modal {
+  min-width: 340px;
+  max-width: 420px;
+}
+.mill-admin-list {
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: .5rem;
+  background: var(--color-bg);
+}
+.mill-admin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .3rem .5rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+}
+.mill-admin-name {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: .875rem;
+  color: var(--color-text);
+}
+.mill-admin-del {
+  background: none;
+  border: 1px solid var(--color-red);
+  border-radius: var(--radius-sm);
+  color: var(--color-red);
+  font-size: .75rem;
+  padding: .15rem .5rem;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+.mill-admin-del:hover {
+  background: var(--color-red);
+  color: #fff;
+}
+.mill-admin-add {
+  display: flex;
+  gap: .5rem;
+}
+.mill-admin-add .mill-modal-input {
+  flex: 1;
 }
 
 /* ── Responsive ─────────────────────────────────────────────────────────────── */
@@ -555,24 +601,108 @@ body {
   .module-header { flex-direction: column; }
 }
 
-/* ── Print ──────────────────────────────────────────────────────────────────── */
+/* ── Print ──────────────────────────────────────────────────────────────────────────────── */
 @media print {
-  .app-nav, .app-header, .action-bar, #app-toast { display: none !important; }
-  .app-shell { display: block; }
-  body, .module-body { background: #fff !important; color: #000 !important; }
-  .module-title { font-size: 18pt; color: #000 !important; }
-  .module-header { border-bottom: 2pt solid #000; }
-  .status-banner { border: 2pt solid #000 !important; color: #000 !important; background: #fff !important; }
-  .module-body { display: block; }
-  .ring-panel { float: left; width: 44%; margin-right: 4%; border: 1pt solid #ccc; }
-  .data-panel { float: left; width: 52%; }
-  .table-section { clear: both; margin-top: 1rem; border: 1pt solid #ccc; overflow: visible; }
-  .inspection-table { min-width: 0; width: 100%; }
-  .inspection-table th, .inspection-table td { color: #000 !important; border-color: #ccc !important; }
-  .face-ring-svg text { fill: #000 !important; }
-  .slipper-svg text   { fill: #fff !important; }
-  .slipper-svg text { fill: #fff !important; }
+
+  /* 1. Hide all app chrome */
+  .app-nav, .app-header, .action-bar, #app-toast,
+  .mill-modal-overlay, .mill-lock-btn { display: none !important; }
+
+  /* 2. Flatten the shell — it's a grid on screen, must be block for print */
+  .app-shell { display: block !important; }
+  .app-main  { display: block !important; padding: 0 !important; overflow: visible !important; }
+  #module-container, .module-wrapper { display: block !important; max-width: none !important; }
+
+  /* 3. Kill ALL backgrounds and box shadows — this is the #1 cause of
+        the browser creating new paint layers that it paginates around */
+  * {
+    background: #fff !important;
+    background-color: #fff !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    color: #000 !important;
+    border-color: #ccc !important;
+  }
+
+  /* 4. Module header */
+  .module-title  { font-size: 16pt; }
+  .module-header { border-bottom: 2pt solid #000 !important; padding-bottom: .5rem; margin-bottom: .75rem; }
+  .status-banner { border: 2pt solid #000 !important; font-size: 13pt; margin-bottom: .75rem; }
+  .meta-input    { border: 1pt solid #ccc !important; }
+
+  /* 5. Face ring / centering ring — float layout */
+  .module-body { display: block !important; }
+  .module-body::after { content: ''; display: table; clear: both; }
+  .ring-panel  { float: left; width: 42%; margin-right: 3%; border: 1pt solid #ccc; }
+  .data-panel  { float: left; width: 55%; }
+  .data-panel::after { content: ''; display: table; clear: both; }
+
+  /* Measurement cards — 2 per row, float side by side */
+  .measurements-grid { display: block !important; }
+  .measurements-grid::after { content: ''; display: table; clear: both; }
+  .measurement-card {
+    float: left;
+    width: 47%;
+    margin-right: 2%;
+    margin-bottom: .4rem;
+    border: 1pt solid #ccc;
+    page-break-inside: avoid;
+    box-sizing: border-box;
+  }
+  .measurement-card:nth-child(2n) { margin-right: 0; }
+
+  /* 6. Slipper — same 2-col card layout */
+  .slipper-grid { display: block !important; }
+  .slipper-grid::after { content: ''; display: table; clear: both; }
+  .slipper-grid .measurement-card {
+    float: left;
+    width: 47%;
+    margin-right: 2%;
+    margin-bottom: .4rem;
+    border: 1pt solid #ccc;
+    page-break-inside: avoid;
+    box-sizing: border-box;
+  }
+  .slipper-grid .measurement-card:nth-child(2n) { margin-right: 0; }
+
+  /* 7. Sliding shoe — float section cards 2-up */
+  .ss-grid { display: block !important; }
+  .ss-grid::after { content: ''; display: table; clear: both; }
+
+  .ss-section-card {
+    float: left;
+    width: 47%;
+    margin-right: 2%;
+    margin-bottom: .75rem;
+    border: 1pt solid #ccc;
+    page-break-inside: avoid;
+    box-sizing: border-box;
+  }
+  .ss-section-card:nth-child(2n)     { margin-right: 0; }
+  .ss-section-card:nth-child(3)      { clear: left; page-break-before: always; }
+
+  .ss-section-body { display: block !important; }
+  .ss-section-body::after { content: ''; display: table; clear: both; }
+  .ss-svg-wrap    { float: left; width: 45%; margin-right: 3%; }
+  .ss-row-summary { float: left; width: 52%; }
+  .ss-section-footer { clear: both; border-top: 1pt solid #ccc; padding-top: .3rem; margin-top: .3rem; }
+
+  /* 8. Results table — keep rows together */
+  .table-section { clear: both; margin-top: .75rem; border: 1pt solid #ccc; padding: .5rem; }
+  /* Force results table onto new page for slipper and sliding shoe */
+  .slipper-module ~ .table-section,
+  .ss-grid ~ .table-section { page-break-before: always; }
+  .inspection-table { width: 100%; }
+  .inspection-table tr { page-break-inside: avoid; }
+
+  /* 9. Status colors for print (dark enough to read on white) */
   .inspection-table tr.s-yellow td { color: #856404 !important; }
   .inspection-table tr.s-orange td { color: #7D3C00 !important; }
-  .inspection-table tr.s-red    td { color: #7B241C !important; }
+  .inspection-table tr.s-red    td { color: #B22222 !important; }
+
+  /* 10. SVG text */
+  .face-ring-svg text { fill: #000 !important; }
+  .slipper-svg text   { fill: #333 !important; }
+  .ss-point-input     { border: 1pt solid #999 !important; font-size: 7pt; }
 }
