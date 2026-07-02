@@ -148,7 +148,7 @@ function buildFilename(moduleTitle, date) {
   // so we only prepend prefix for Steckel to avoid "Rougher Rougher Bottom Wobbler"
   var wobblerLabel = groupKey.startsWith('rougher') ? wobbler : prefix + ' ' + wobbler;
   var d = date || new Date().toISOString().slice(0, 10);
-  return d + ' - ' + mill + ' - ' + module;
+  return d + ' - ' + mill + ' ' + wobblerLabel + ' - ' + module;
 }
 
 function savePDF(moduleTitle, date) {
