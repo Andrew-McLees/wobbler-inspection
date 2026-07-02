@@ -142,10 +142,13 @@ function buildFilename(moduleTitle, date) {
   } else {
     groupKey = wobbler.toLowerCase().indexOf('bottom') !== -1 ? 'steckel_bottom' : 'steckel_top';
   }
-  var mill = getMillFor(groupKey);
+  var mill   = getMillFor(groupKey);
   var prefix = groupKey.startsWith('rougher') ? 'Rougher' : 'Steckel';
+  // wobbler already contains 'Rougher' in its name, but not 'Steckel'
+  // so we only prepend prefix for Steckel to avoid "Rougher Rougher Bottom Wobbler"
+  var wobblerLabel = groupKey.startsWith('rougher') ? wobbler : prefix + ' ' + wobbler;
   var d = date || new Date().toISOString().slice(0, 10);
-  return mill + ' ' + prefix + ' ' + wobbler + ' - ' + module + ' - ' + d;
+  return mill + ' ' + wobblerLabel + ' - ' + d + ' - ' + module;
 }
 
 function savePDF(moduleTitle, date) {
