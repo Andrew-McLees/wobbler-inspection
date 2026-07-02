@@ -148,7 +148,7 @@ function buildFilename(moduleTitle, date) {
   // so we only prepend prefix for Steckel to avoid "Rougher Rougher Bottom Wobbler"
   var wobblerLabel = groupKey.startsWith('rougher') ? wobbler : prefix + ' ' + wobbler;
   var d = date || new Date().toISOString().slice(0, 10);
-  return mill + ' ' + wobblerLabel + ' - ' + d + ' - ' + module;
+  return d + ' - ' + mill + ' - ' + module;
 }
 
 function savePDF(moduleTitle, date) {
@@ -933,12 +933,12 @@ var SLIPPER_LIMITS = {
 };
 
 var SLIPPER_LOCATIONS = [
-  { id: 'ft', label: 'Front Top',    row: 0, col: 0 },
-  { id: 'fb', label: 'Front Bottom', row: 0, col: 1 },
-  { id: 'ct', label: 'Center Top',   row: 1, col: 0 },
-  { id: 'cb', label: 'Center Bottom',row: 1, col: 1 },
-  { id: 'bt', label: 'Back Top',     row: 2, col: 0 },
-  { id: 'bb', label: 'Back Bottom',  row: 2, col: 1 }
+  { id: 'ft', label: 'Front Top',    col: 0, row: 0 },
+  { id: 'ct', label: 'Center Top',   col: 1, row: 0 },
+  { id: 'bt', label: 'Back Top',     col: 2, row: 0 },
+  { id: 'fb', label: 'Front Bottom', col: 0, row: 1 },
+  { id: 'cb', label: 'Center Bottom',col: 1, row: 1 },
+  { id: 'bb', label: 'Back Bottom',  col: 2, row: 1 }
 ];
 
 function calcSlipperWear(measurement) {
@@ -983,7 +983,7 @@ function renderSlipperSVG(container) {
   // Top face    = fTL, rTL, rTR, fTR  (recedes upper-right)
   // Right face  = fTR, rTR, rBR, fBR  (wide, holds 6 bolts)
 
-  var VW = 560, VH = 360;
+  var VW = 600, VH = 370;
   var svg = svgEl('svg', { viewBox: '0 0 ' + VW + ' ' + VH, class: 'face-ring-svg slipper-svg' });
 
   // Slab dimensions in SVG units
@@ -995,7 +995,7 @@ function renderSlipperSVG(container) {
   var SY  = -70;   // y offset to recession point (negative = up)
 
   // Anchor: front face bottom-left corner
-  var AX = 58, AY = 295;
+  var AX = 95, AY = 300;
 
   // Front face corners
   var fBL = { x: AX,        y: AY       };
@@ -1061,59 +1061,72 @@ function renderSlipperSVG(container) {
     }));
   });
 
-  // Dashed column divider (split Top/Bottom — vertical on the right face)
-  var d0 = facePoint(0.02, 0.5), d1 = facePoint(0.98, 0.5);
+  // Dashed row divider (split Top/Bottom — 1 horizontal line at u=0.5)
+  var r0 = facePoint(0.5, 0.02), r1 = facePoint(0.5, 0.98);
   svg.appendChild(svgEl('line', {
-    x1: d0.x.toFixed(1), y1: d0.y.toFixed(1),
-    x2: d1.x.toFixed(1), y2: d1.y.toFixed(1),
+    x1: r0.x.toFixed(1), y1: r0.y.toFixed(1),
+    x2: r1.x.toFixed(1), y2: r1.y.toFixed(1),
     stroke: '#2E3F55', 'stroke-width': 1, 'stroke-dasharray': '6 3'
   }));
 
-  // Row labels: FRONT / CENTER / BACK — right side of right face
-  ['FRONT', 'CENTER', 'BACK'].forEach(function(label, i) {
-    var p = facePoint((i * 2 + 1) / 6, 1);
+  // Dashed column dividers (split Front/Center/Back — 2 vertical lines at v=1/3, 2/3)
+  [1/3, 2/3].forEach(function(v) {
+    var p0 = facePoint(0.02, v), p1 = facePoint(0.98, v);
+    svg.appendChild(svgEl('line', {
+      x1: p0.x.toFixed(1), y1: p0.y.toFixed(1),
+      x2: p1.x.toFixed(1), y2: p1.y.toFixed(1),
+      stroke: '#2E3F55', 'stroke-width': 1, 'stroke-dasharray': '6 3'
+    }));
+  });
+
+  // Row labels: TOP / BOTTOM — LEFT side of right face
+  // u=0 is top of face, u=1 is bottom — so TOP is i=0 (low u), BOTTOM is i=1 (high u)
+  // But visually the face goes bottom-left to upper-right, so u=0 = bottom of screen
+  // Swap to ['BOTTOM','TOP'] so the label that appears higher on screen reads TOP
+  ['BOTTOM', 'TOP'].forEach(function(label, i) {
+    var p = facePoint((i * 2 + 1) / 4, 0);
     svg.appendChild(svgEl('text', {
-      x: (p.x + 8).toFixed(1), y: p.y.toFixed(1),
-      'text-anchor': 'start', 'dominant-baseline': 'middle',
+      x: (p.x - 20).toFixed(1), y: p.y.toFixed(1),
+      'text-anchor': 'end', 'dominant-baseline': 'middle',
       fill: '#7F8C8D', 'font-size': 13, 'font-family': 'monospace', 'font-weight': 'bold'
     }, label));
   });
 
-  // Column labels: TOP / BOTTOM — above the right face top edge
-  ['TOP', 'BOTTOM'].forEach(function(label, j) {
-    var p = facePoint(1, (j * 2 + 1) / 4);
+  // Column labels: FRONT / CENTER / BACK — above the right face top edge (along v axis)
+  ['FRONT', 'CENTER', 'BACK'].forEach(function(label, j) {
+    var p = facePoint(1, (j * 2 + 1) / 6);
     svg.appendChild(svgEl('text', {
-      x: p.x.toFixed(1), y: (p.y - 12).toFixed(1),
+      x: p.x.toFixed(1), y: (p.y - 22).toFixed(1),
       'text-anchor': 'middle', 'dominant-baseline': 'middle',
       fill: '#7F8C8D', 'font-size': 13, 'font-family': 'monospace', 'font-weight': 'bold'
     }, label));
   });
 
   // Bolt holes on the right face
-  // loc.row = 0(Front)/1(Center)/2(Back) → u axis (bottom=front → top=back)
-  // loc.col = 0(Top)  /1(Bottom)         → v axis (left → right)
+  // loc.col = 0(Front)/1(Center)/2(Back) → v axis (left → right)
+  // loc.row = 0(Top)  /1(Bottom)         → u axis (top → bottom)
   SLIPPER_LOCATIONS.forEach(function(loc) {
-    var u = (loc.row * 2 + 1) / 6;
-    var v = (loc.col * 2 + 1) / 4;
-    var c = facePoint(u, v);
+    var u = (loc.row * 2 + 1) / 4;
+    var v = (loc.col * 2 + 1) / 6;
+    var pt = facePoint(u, v);
 
     // Bolt hole — circle (right face is close to vertical so circles work)
     svg.appendChild(svgEl('circle', {
-      cx: c.x.toFixed(1), cy: c.y.toFixed(1), r: 16,
+      cx: pt.x.toFixed(1), cy: pt.y.toFixed(1), r: 16,
       fill: '#0A1220', stroke: '#3A4F65', 'stroke-width': 1.5
     }));
     svg.appendChild(svgEl('circle', {
-      cx: c.x.toFixed(1), cy: c.y.toFixed(1), r: 8,
+      cx: pt.x.toFixed(1), cy: pt.y.toFixed(1), r: 8,
       fill: '#162030', stroke: '#2E3F55', 'stroke-width': 1.5
     }));
     svg.appendChild(svgEl('circle', {
-      cx: c.x.toFixed(1), cy: c.y.toFixed(1), r: 3,
+      cx: pt.x.toFixed(1), cy: pt.y.toFixed(1), r: 3,
       fill: '#0A1220', stroke: 'none'
     }));
 
     // Status indicator ring
     var dot = svgEl('circle', {
-      cx: c.x.toFixed(1), cy: c.y.toFixed(1), r: 16,
+      cx: pt.x.toFixed(1), cy: pt.y.toFixed(1), r: 16,
       fill: 'none', stroke: '#FFFFFF', 'stroke-width': 2.5
     });
     svg.appendChild(dot);
@@ -1121,7 +1134,7 @@ function renderSlipperSVG(container) {
 
     // Readout below bolt
     var readout = svgEl('text', {
-      x: c.x.toFixed(1), y: (c.y + 26).toFixed(1),
+      x: pt.x.toFixed(1), y: (pt.y + 26).toFixed(1),
       'text-anchor': 'middle', 'dominant-baseline': 'middle',
       fill: 'transparent', 'font-size': 13, 'font-family': 'monospace'
     }, '');

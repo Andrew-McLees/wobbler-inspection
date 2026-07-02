@@ -281,8 +281,8 @@ body {
 /* ── Slipper Grid (2-col × 3-row matching the physical bolt layout) ─────────── */
 .slipper-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: repeat(3, auto);
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: repeat(2, auto);
   gap: .75rem;
 }
 
@@ -657,14 +657,15 @@ body {
   .slipper-grid::after { content: ''; display: table; clear: both; }
   .slipper-grid .measurement-card {
     float: left;
-    width: 47%;
+    width: 31%;
     margin-right: 2%;
     margin-bottom: .4rem;
     border: 1pt solid #ccc;
     page-break-inside: avoid;
     box-sizing: border-box;
   }
-  .slipper-grid .measurement-card:nth-child(2n) { margin-right: 0; }
+  .slipper-grid .measurement-card:nth-child(3n) { margin-right: 0; }
+  .slipper-grid .measurement-card:nth-child(4)  { clear: left; }
 
   /* 7. Sliding shoe — float section cards 2-up */
   .ss-grid { display: block !important; }
@@ -700,6 +701,11 @@ body {
   .inspection-table tr.s-yellow td { color: #856404 !important; }
   .inspection-table tr.s-orange td { color: #7D3C00 !important; }
   .inspection-table tr.s-red    td { color: #B22222 !important; }
+
+  /* 9b. Blank inputs on print — hide placeholder, show empty box */
+  .card-input::placeholder { color: transparent !important; }
+  .ss-point-input::placeholder { color: transparent !important; }
+  .meta-input::placeholder { color: transparent !important; }
 
   /* 10. SVG text */
   .face-ring-svg text { fill: #000 !important; }
