@@ -41,6 +41,43 @@ function fmt4(n) {
 }
 
 // =============================================================================
+// DRAFTS
+// Live, in-progress values for a module (separate from the saved history in
+// STORE_KEY). Lets a tab's in-progress entry survive switching to another
+// tab, and lets other code (combined report) check "does this component
+// currently have anything entered" without needing it mounted on screen.
+// =============================================================================
+
+function draftKey(storageKey) { return 'draft_' + storageKey; }
+
+function loadDraft(storageKey) {
+  try {
+    var raw = localStorage.getItem(draftKey(storageKey));
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
+function saveDraftData(storageKey, data) {
+  try { localStorage.setItem(draftKey(storageKey), JSON.stringify(data)); } catch (e) {}
+}
+
+function clearDraft(storageKey) {
+  try { localStorage.removeItem(draftKey(storageKey)); } catch (e) {}
+}
+
+function anyNonEmpty(val) {
+  if (val === '' || val === null || val === undefined) return false;
+  if (Array.isArray(val)) return val.some(anyNonEmpty);
+  if (typeof val === 'object') return Object.keys(val).some(function(k) { return anyNonEmpty(val[k]); });
+  return true;
+}
+
+function draftHasData(storageKey) {
+  var d = loadDraft(storageKey);
+  return !!(d && d.measurements && anyNonEmpty(d.measurements));
+}
+
+// =============================================================================
 // STORAGE
 // =============================================================================
 
@@ -247,6 +284,99 @@ function savePDF(moduleTitle, groupKey, date) {
   }, 80);
 }
 
+// =============================================================================
+// COMBINED REPORT
+// Prints one PDF containing a page for each component (Face Ring, Centering
+// Ring, Slipper, Sliding Shoe) that currently has data entered anywhere for
+// this wobbler group — regardless of which tab is on screen right now.
+// Components with nothing entered are skipped entirely; only 1 is required.
+//
+// IMPORTANT: this renders throwaway module instances via MODULE_FACTORIES,
+// never the live singleton instance already mounted in the sidebar tab —
+// re-running .init() on a module that's currently on screen would repoint
+// its cached DOM refs at the new container and silently break the visible
+// tab. A fresh instance reads the same localStorage draft, so it shows the
+// same data without touching what's on screen.
+// =============================================================================
+
+var MODULE_FACTORIES = {
+  faceRing:      createFaceRingModule,
+  centeringRing: createCenteringRingModule,
+  slipper:       createSlipperModule,
+  slidingShoe:   createSlidingShoeModule
+};
+
+function saveCombinedReport(groupKey) {
+  var group = null;
+  for (var i = 0; i < NAV_GROUPS.length; i++) {
+    if (NAV_GROUPS[i].key === groupKey) { group = NAV_GROUPS[i]; break; }
+  }
+  if (!group) return;
+
+  // group.tabs is already in the fixed order: Face Ring, Centering Ring,
+  // Slipper, Sliding Shoe — so the printed pages and filename follow that
+  // same order regardless of the order components were filled in.
+  var included = group.tabs.filter(function(tab) {
+    return draftHasData(tab.module.config.storageKey);
+  });
+
+  if (!included.length) {
+    showToast('Enter data in at least one component before printing', 'error');
+    return;
+  }
+
+  // Log each included component to inspection history, same as an
+  // individual "Save Inspection" click would.
+  included.forEach(function(tab) {
+    var draft = loadDraft(tab.module.config.storageKey);
+    if (draft) storeSave(tab.module.config.storageKey, draft);
+  });
+
+  var old = document.getElementById('combined-report-container');
+  if (old) old.remove();
+  var combined = document.createElement('div');
+  combined.id = 'combined-report-container';
+  document.body.appendChild(combined);
+
+  included.forEach(function(tab) {
+    var factory = MODULE_FACTORIES[tab.module.type];
+    if (!factory) return;
+    var page = document.createElement('div');
+    page.className = 'combined-report-page';
+    var wrapper = document.createElement('div');
+    wrapper.className = 'module-wrapper';
+    page.appendChild(wrapper);
+    combined.appendChild(page);
+    // Distinct DOM id prefix so this throwaway instance never collides with
+    // the same tab if it happens to be live-mounted elsewhere on the page
+    // right now — same storageKey underneath, so drafts/history still match.
+    var printConfig = Object.assign({}, tab.module.config, {
+      domPrefix: tab.module.config.storageKey + '__print'
+    });
+    factory(printConfig).init(wrapper); // fresh, throwaway instance
+  });
+
+  var componentLabels = included.map(function(tab) { return tab.label; });
+  var mill = getMillFor(groupKey);
+  var wobblerLabel = getGroupDisplayName(groupKey);
+  var d = new Date().toISOString().slice(0, 10);
+  var filename = d + ' - ' + mill + ' ' + wobblerLabel + ' - ' + componentLabels.join(' - ');
+
+  var orig = document.title;
+  document.title = filename;
+  document.body.classList.add('combined-print-mode');
+
+  setTimeout(function() {
+    window.print();
+    setTimeout(function() {
+      document.title = orig;
+      document.body.classList.remove('combined-print-mode');
+      var c = document.getElementById('combined-report-container');
+      if (c) c.remove();
+    }, 1500);
+  }, 80);
+}
+
 function getNavGroupLabel(groupKey) {
   return getMillFor(groupKey) + ' ' + getGroupDisplayName(groupKey);
 }
@@ -402,8 +532,6 @@ function renderWobblerAdmin(groupKey, textNode) {
 
 var SVG_NS = 'http://www.w3.org/2000/svg';
 var CX = 200, CY = 200, OR = 148, IR = 104;
-var _indicators = {};
-var _readouts = {};
 
 function svgEl(tag, attrs, text) {
   var n = document.createElementNS(SVG_NS, tag);
@@ -413,8 +541,8 @@ function svgEl(tag, attrs, text) {
 }
 
 function renderFaceRing(container, locations) {
-  _indicators = {};
-  _readouts = {};
+  var indicators = {};
+  var readouts = {};
   container.innerHTML = '';
 
   var svg = svgEl('svg', { viewBox: '0 0 400 400', class: 'face-ring-svg' });
@@ -457,7 +585,7 @@ function renderFaceRing(container, locations) {
       'stroke-width': 2
     });
     svg.appendChild(dot);
-    _indicators[loc.id] = dot;
+    indicators[loc.id] = dot;
 
     var LO = OR + 22;  // label offset — just outside the ring surface
 
@@ -490,24 +618,25 @@ function renderFaceRing(container, locations) {
       'font-family': 'monospace'
     }, '');
     svg.appendChild(readout);
-    _readouts[loc.id] = readout;
+    readouts[loc.id] = readout;
   });
 
   container.appendChild(svg);
+  return { indicators: indicators, readouts: readouts };
 }
 
-function updateSVGColors(colorMap) {
+function updateSVGColors(indicators, colorMap) {
   Object.keys(colorMap).forEach(function(id) {
-    if (_indicators[id]) _indicators[id].setAttribute('fill', colorMap[id]);
+    if (indicators[id]) indicators[id].setAttribute('fill', colorMap[id]);
   });
 }
 
-function updateSVGReadouts(valueMap) {
+function updateSVGReadouts(readouts, valueMap) {
   Object.keys(valueMap).forEach(function(id) {
-    if (_readouts[id]) {
+    if (readouts[id]) {
       var val = valueMap[id];
-      _readouts[id].textContent = val || '';
-      _readouts[id].setAttribute('fill', val ? '#E8EDF2' : 'transparent');
+      readouts[id].textContent = val || '';
+      readouts[id].setAttribute('fill', val ? '#E8EDF2' : 'transparent');
     }
   });
 }
@@ -537,7 +666,7 @@ var LOCATIONS = [
 function createFaceRingModule(config) {
   // config = { storageKey: 'bottom_wobbler', title: 'Bottom Wobbler — Face Ring Inspection' }
 
-  var p = config.storageKey; // prefix for DOM IDs — keeps instances isolated
+  var p = config.domPrefix || config.storageKey; // prefix for DOM IDs — keeps instances isolated
 
   var NOM = config.nominal || NEW_RING;  // per-instance nominal
 
@@ -561,7 +690,10 @@ function createFaceRingModule(config) {
   // ── Build & mount ──────────────────────────────────────────────────────────
 
   function init(container) {
-    state.measurements = { tb: '', lr: '', tlbr: '', trbl: '' };
+    var draft = loadDraft(config.storageKey);
+    state.measurements = (draft && draft.measurements) ? draft.measurements : { tb: '', lr: '', tlbr: '', trbl: '' };
+    state.inspector = (draft && draft.inspector) || '';
+    state.date = (draft && draft.date) || '';
 
     var cardsHTML = LOCATIONS.map(function(loc) {
       return [
@@ -608,6 +740,7 @@ function createFaceRingModule(config) {
       '  <button id="' + p + '-save"  class="btn btn-primary">Save Inspection</button>',
       '  <button id="' + p + '-reset" class="btn btn-ghost">Reset</button>',
       '  <button id="' + p + '-print" class="btn btn-ghost">Print Report</button>',
+      '  <button id="' + p + '-save-combined" class="btn btn-primary">Save Combined Report</button>',
       '</div>'
     ].join('');
 
@@ -654,28 +787,38 @@ function createFaceRingModule(config) {
     tbody = tbl.createTBody();
     el.tableDiv.appendChild(tbl);
 
-    // Set today's date
+    // Default to today only if no draft date; restore field values from draft
     var today = new Date().toISOString().slice(0, 10);
-    el.date.value = today;
-    state.date = today;
+    if (!state.date) state.date = today;
+    el.date.value = state.date;
+    el.inspector.value = state.inspector;
+    LOCATIONS.forEach(function(loc) {
+      if (state.measurements[loc.id]) el.inputs[loc.id].value = state.measurements[loc.id];
+    });
 
     // Input listeners
     LOCATIONS.forEach(function(loc) {
       el.inputs[loc.id].addEventListener('input', function(e) {
         state.measurements[loc.id] = e.target.value;
         update();
+        persistDraft();
       });
     });
 
-    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; });
-    el.date.addEventListener('input', function(e) { state.date = e.target.value; });
+    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; persistDraft(); });
+    el.date.addEventListener('input', function(e) { state.date = e.target.value; persistDraft(); });
 
     container.querySelector('#' + p + '-save').addEventListener('click', save);
     container.querySelector('#' + p + '-reset').addEventListener('click', reset);
     container.querySelector('#' + p + '-print').addEventListener('click', function() { window.print(); });
+    container.querySelector('#' + p + '-save-combined').addEventListener('click', function() { saveCombinedReport(config.groupKey); });
 
-    renderFaceRing(container.querySelector('#' + p + '-svg'), LOCATIONS);
+    el.svgRefs = renderFaceRing(container.querySelector('#' + p + '-svg'), LOCATIONS);
     update();
+  }
+
+  function persistDraft() {
+    saveDraftData(config.storageKey, { inspector: state.inspector, date: state.date, measurements: state.measurements });
   }
 
   // ── Update (runs on every input change) ───────────────────────────────────
@@ -729,8 +872,8 @@ function createFaceRingModule(config) {
       colorMap[r.id]   = r.status ? r.status.color : '#FFFFFF';
       readoutMap[r.id] = r.measurement !== null ? r.measurement.toFixed(4) : '';
     });
-    updateSVGColors(colorMap);
-    updateSVGReadouts(readoutMap);
+    updateSVGColors(el.svgRefs.indicators, colorMap);
+    updateSVGReadouts(el.svgRefs.readouts, readoutMap);
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────
@@ -748,13 +891,14 @@ function createFaceRingModule(config) {
 
   function reset() {
     state.measurements = { tb: '', lr: '', tlbr: '', trbl: '' };
+    clearDraft(config.storageKey);
     LOCATIONS.forEach(function(loc) {
       el.inputs[loc.id].value = '';
     });
     update();
   }
 
-  return { init: init };
+  return { init: init, config: config, type: 'faceRing' };
 }
 
 
@@ -796,12 +940,9 @@ function validateCenteringMeasurement(val) {
   return { valid: true, number: n };
 }
 
-var _crIndicators = {};
-var _crReadouts   = {};
-
 function renderCenteringRing(container) {
-  _crIndicators = {};
-  _crReadouts   = {};
+  var indicators = {};
+  var readouts   = {};
   container.innerHTML = '';
 
   var svg = svgEl('svg', { viewBox: '0 0 400 400', class: 'face-ring-svg' });
@@ -857,7 +998,7 @@ function renderCenteringRing(container) {
       r: 10, fill: '#FFFFFF', stroke: '#2C3E50', 'stroke-width': 2
     });
     svg.appendChild(dot);
-    _crIndicators[loc.id] = dot;
+    indicators[loc.id] = dot;
 
     // Readout
     var RO = 148 - 20;
@@ -868,30 +1009,31 @@ function renderCenteringRing(container) {
       fill: 'transparent', 'font-size': 14, 'font-family': 'monospace'
     }, '');
     svg.appendChild(readout);
-    _crReadouts[loc.id] = readout;
+    readouts[loc.id] = readout;
   });
 
   container.appendChild(svg);
+  return { indicators: indicators, readouts: readouts };
 }
 
-function updateCRColors(colorMap) {
+function updateCRColors(indicators, colorMap) {
   Object.keys(colorMap).forEach(function(id) {
-    if (_crIndicators[id]) _crIndicators[id].setAttribute('fill', colorMap[id]);
+    if (indicators[id]) indicators[id].setAttribute('fill', colorMap[id]);
   });
 }
 
-function updateCRReadouts(valueMap) {
+function updateCRReadouts(readouts, valueMap) {
   Object.keys(valueMap).forEach(function(id) {
-    if (_crReadouts[id]) {
+    if (readouts[id]) {
       var val = valueMap[id];
-      _crReadouts[id].textContent = val || '';
-      _crReadouts[id].setAttribute('fill', val ? '#E8EDF2' : 'transparent');
+      readouts[id].textContent = val || '';
+      readouts[id].setAttribute('fill', val ? '#E8EDF2' : 'transparent');
     }
   });
 }
 
 function createCenteringRingModule(config) {
-  var p = config.storageKey;
+  var p = config.domPrefix || config.storageKey;
   var NOM_CR = config.nominal || CENTERING_RING_NOMINAL;
 
   var state = {
@@ -904,7 +1046,10 @@ function createCenteringRingModule(config) {
   var tbody;
 
   function init(container) {
-    state.measurements = { tb: '', lr: '' };
+    var draft = loadDraft(config.storageKey);
+    state.measurements = (draft && draft.measurements) ? draft.measurements : { tb: '', lr: '' };
+    state.inspector = (draft && draft.inspector) || '';
+    state.date = (draft && draft.date) || '';
 
     var cardsHTML = CENTERING_LOCATIONS.map(function(loc) {
       return [
@@ -947,6 +1092,7 @@ function createCenteringRingModule(config) {
       '  <button id="' + p + '-save"  class="btn btn-primary">Save Inspection</button>',
       '  <button id="' + p + '-reset" class="btn btn-ghost">Reset</button>',
       '  <button id="' + p + '-print" class="btn btn-ghost">Print Report</button>',
+      '  <button id="' + p + '-save-combined" class="btn btn-primary">Save Combined Report</button>',
       '</div>'
     ].join('');
 
@@ -979,22 +1125,33 @@ function createCenteringRingModule(config) {
     el.tableDiv.appendChild(tbl);
 
     var today = new Date().toISOString().slice(0,10);
-    el.date.value = today; state.date = today;
+    if (!state.date) state.date = today;
+    el.date.value = state.date;
+    el.inspector.value = state.inspector;
+    CENTERING_LOCATIONS.forEach(function(loc) {
+      if (state.measurements[loc.id]) el.inputs[loc.id].value = state.measurements[loc.id];
+    });
 
     CENTERING_LOCATIONS.forEach(function(loc) {
       el.inputs[loc.id].addEventListener('input', function(e) {
         state.measurements[loc.id] = e.target.value;
         update();
+        persistDraft();
       });
     });
-    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; });
-    el.date.addEventListener('input', function(e) { state.date = e.target.value; });
+    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; persistDraft(); });
+    el.date.addEventListener('input', function(e) { state.date = e.target.value; persistDraft(); });
     container.querySelector('#' + p + '-save').addEventListener('click', save);
     container.querySelector('#' + p + '-reset').addEventListener('click', reset);
     container.querySelector('#' + p + '-print').addEventListener('click', function() { window.print(); });
+    container.querySelector('#' + p + '-save-combined').addEventListener('click', function() { saveCombinedReport(config.groupKey); });
 
-    renderCenteringRing(container.querySelector('#' + p + '-svg'));
+    el.svgRefs = renderCenteringRing(container.querySelector('#' + p + '-svg'));
     update();
+  }
+
+  function persistDraft() {
+    saveDraftData(config.storageKey, { inspector: state.inspector, date: state.date, measurements: state.measurements });
   }
 
   function update() {
@@ -1044,8 +1201,8 @@ function createCenteringRingModule(config) {
       colorMap[r.id]   = r.status ? r.status.color : '#FFFFFF';
       readoutMap[r.id] = r.measurement !== null ? r.measurement.toFixed(4) : '';
     });
-    updateCRColors(colorMap);
-    updateCRReadouts(readoutMap);
+    updateCRColors(el.svgRefs.indicators, colorMap);
+    updateCRReadouts(el.svgRefs.readouts, readoutMap);
   }
 
   function save() {
@@ -1057,11 +1214,12 @@ function createCenteringRingModule(config) {
 
   function reset() {
     state.measurements = { tb: '', lr: '' };
+    clearDraft(config.storageKey);
     CENTERING_LOCATIONS.forEach(function(loc) { el.inputs[loc.id].value = ''; });
     update();
   }
 
-  return { init: init };
+  return { init: init, config: config, type: 'centeringRing' };
 }
 
 // =============================================================================
@@ -1115,12 +1273,9 @@ function validateSlipperMeasurement(val) {
   return { valid: true, number: n };
 }
 
-var _slIndicators = {};
-var _slReadouts   = {};
-
 function renderSlipperSVG(container) {
-  _slIndicators = {};
-  _slReadouts   = {};
+  var indicators = {};
+  var readouts   = {};
   container.innerHTML = '';
 
   // True isometric-style brick corner view:
@@ -1285,7 +1440,7 @@ function renderSlipperSVG(container) {
       fill: 'none', stroke: '#FFFFFF', 'stroke-width': 2.5
     });
     svg.appendChild(dot);
-    _slIndicators[loc.id] = dot;
+    indicators[loc.id] = dot;
 
     // Readout below bolt
     var readout = svgEl('text', {
@@ -1294,7 +1449,7 @@ function renderSlipperSVG(container) {
       fill: 'transparent', 'font-size': 13, 'font-family': 'monospace'
     }, '');
     svg.appendChild(readout);
-    _slReadouts[loc.id] = readout;
+    readouts[loc.id] = readout;
   });
 
   // Label on the front face
@@ -1307,26 +1462,27 @@ function renderSlipperSVG(container) {
   }, 'SLIPPER'));
 
   container.appendChild(svg);
+  return { indicators: indicators, readouts: readouts };
 }
 
-function updateSlipperColors(colorMap) {
+function updateSlipperColors(indicators, colorMap) {
   Object.keys(colorMap).forEach(function(id) {
-    if (_slIndicators[id]) _slIndicators[id].setAttribute('stroke', colorMap[id]);
+    if (indicators[id]) indicators[id].setAttribute('stroke', colorMap[id]);
   });
 }
 
-function updateSlipperReadouts(valueMap) {
+function updateSlipperReadouts(readouts, valueMap) {
   Object.keys(valueMap).forEach(function(id) {
-    if (_slReadouts[id]) {
+    if (readouts[id]) {
       var val = valueMap[id];
-      _slReadouts[id].textContent = val || '';
-      _slReadouts[id].setAttribute('fill', val ? '#E8EDF2' : 'transparent');
+      readouts[id].textContent = val || '';
+      readouts[id].setAttribute('fill', val ? '#E8EDF2' : 'transparent');
     }
   });
 }
 
 function createSlipperModule(config) {
-  var p = config.storageKey;
+  var p = config.domPrefix || config.storageKey;
   var NOM_SL = config.nominal || SLIPPER_NOMINAL;
 
   var emptyMeasurements = function() {
@@ -1340,7 +1496,10 @@ function createSlipperModule(config) {
   var tbody;
 
   function init(container) {
-    state.measurements = emptyMeasurements();
+    var draft = loadDraft(config.storageKey);
+    state.measurements = (draft && draft.measurements) ? draft.measurements : emptyMeasurements();
+    state.inspector = (draft && draft.inspector) || '';
+    state.date = (draft && draft.date) || '';
 
     // Cards in a 2-col grid matching the slipper layout
     var cardsHTML = SLIPPER_LOCATIONS.map(function(loc) {
@@ -1384,6 +1543,7 @@ function createSlipperModule(config) {
       '  <button id="' + p + '-save"  class="btn btn-primary">Save Inspection</button>',
       '  <button id="' + p + '-reset" class="btn btn-ghost">Reset</button>',
       '  <button id="' + p + '-print" class="btn btn-ghost">Print Report</button>',
+      '  <button id="' + p + '-save-combined" class="btn btn-primary">Save Combined Report</button>',
       '</div>'
     ].join('');
 
@@ -1416,22 +1576,33 @@ function createSlipperModule(config) {
     el.tableDiv.appendChild(tbl);
 
     var today = new Date().toISOString().slice(0,10);
-    el.date.value = today; state.date = today;
+    if (!state.date) state.date = today;
+    el.date.value = state.date;
+    el.inspector.value = state.inspector;
+    SLIPPER_LOCATIONS.forEach(function(loc) {
+      if (state.measurements[loc.id]) el.inputs[loc.id].value = state.measurements[loc.id];
+    });
 
     SLIPPER_LOCATIONS.forEach(function(loc) {
       el.inputs[loc.id].addEventListener('input', function(e) {
         state.measurements[loc.id] = e.target.value;
         update();
+        persistDraft();
       });
     });
-    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; });
-    el.date.addEventListener('input', function(e) { state.date = e.target.value; });
+    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; persistDraft(); });
+    el.date.addEventListener('input', function(e) { state.date = e.target.value; persistDraft(); });
     container.querySelector('#' + p + '-save').addEventListener('click', save);
     container.querySelector('#' + p + '-reset').addEventListener('click', reset);
     container.querySelector('#' + p + '-print').addEventListener('click', function() { window.print(); });
+    container.querySelector('#' + p + '-save-combined').addEventListener('click', function() { saveCombinedReport(config.groupKey); });
 
-    renderSlipperSVG(container.querySelector('#' + p + '-svg'));
+    el.svgRefs = renderSlipperSVG(container.querySelector('#' + p + '-svg'));
     update();
+  }
+
+  function persistDraft() {
+    saveDraftData(config.storageKey, { inspector: state.inspector, date: state.date, measurements: state.measurements });
   }
 
   function update() {
@@ -1481,8 +1652,8 @@ function createSlipperModule(config) {
       colorMap[r.id]   = r.status ? r.status.color : '#FFFFFF';
       readoutMap[r.id] = r.measurement !== null ? r.measurement.toFixed(4) : '';
     });
-    updateSlipperColors(colorMap);
-    updateSlipperReadouts(readoutMap);
+    updateSlipperColors(el.svgRefs.indicators, colorMap);
+    updateSlipperReadouts(el.svgRefs.readouts, readoutMap);
   }
 
   function save() {
@@ -1494,11 +1665,12 @@ function createSlipperModule(config) {
 
   function reset() {
     state.measurements = emptyMeasurements();
+    clearDraft(config.storageKey);
     SLIPPER_LOCATIONS.forEach(function(loc) { el.inputs[loc.id].value = ''; });
     update();
   }
 
-  return { init: init };
+  return { init: init, config: config, type: 'slipper' };
 }
 
 // =============================================================================
@@ -1615,13 +1787,18 @@ function renderSSSectionSVG(container, sectionId, measurements, onInput) {
 }
 
 function createSlidingShoeModule(config) {
-  var p = config.storageKey;
+  var p = config.domPrefix || config.storageKey;
   var state = { inspector: '', date: '', measurements: ssEmptyMeasurements() };
   var el = {};
   var tbody;
+  var containerRef;
 
   function init(container) {
-    state.measurements = ssEmptyMeasurements();
+    containerRef = container;
+    var draft = loadDraft(config.storageKey);
+    state.measurements = (draft && draft.measurements) ? draft.measurements : ssEmptyMeasurements();
+    state.inspector = (draft && draft.inspector) || '';
+    state.date = (draft && draft.date) || '';
 
     var sectionsHTML = SS_SECTIONS.map(function(sec) {
       return [
@@ -1665,6 +1842,7 @@ function createSlidingShoeModule(config) {
       '  <button id="' + p + '-save"  class="btn btn-primary">Save Inspection</button>',
       '  <button id="' + p + '-reset" class="btn btn-ghost">Reset</button>',
       '  <button id="' + p + '-print" class="btn btn-ghost">Print Report</button>',
+      '  <button id="' + p + '-save-combined" class="btn btn-primary">Save Combined Report</button>',
       '</div>'
     ].join('');
 
@@ -1672,6 +1850,20 @@ function createSlidingShoeModule(config) {
     el.tableDiv  = container.querySelector('#' + p + '-table');
     el.inspector = container.querySelector('#' + p + '-inspector');
     el.date      = container.querySelector('#' + p + '-date');
+
+    // Cache section refs scoped to THIS container, rather than looking them
+    // up globally by id — two mounted instances (e.g. the live tab plus a
+    // throwaway combined-report copy) share the same id prefix, so a global
+    // document.getElementById lookup could grab the wrong instance's DOM.
+    el.card = {}; el.sum = {}; el.sts = {}; el.rowMax = {};
+    SS_SECTIONS.forEach(function(sec) {
+      el.card[sec.id] = container.querySelector('#' + p + '-sec-' + sec.id);
+      el.sum[sec.id]  = container.querySelector('#' + p + '-sum-' + sec.id);
+      el.sts[sec.id]  = container.querySelector('#' + p + '-sts-' + sec.id);
+      el.rowMax[sec.id] = SS_ROW_LABELS.map(function(_, ri) {
+        return container.querySelector('#' + p + '-max-' + sec.id + '-' + ri);
+      });
+    });
 
     var tbl = document.createElement('table');
     tbl.className = 'inspection-table';
@@ -1691,22 +1883,30 @@ function createSlidingShoeModule(config) {
     el.tableDiv.appendChild(tbl);
 
     var today = new Date().toISOString().slice(0,10);
-    el.date.value = today; state.date = today;
-    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; });
-    el.date.addEventListener('input', function(e) { state.date = e.target.value; });
+    if (!state.date) state.date = today;
+    el.date.value = state.date;
+    el.inspector.value = state.inspector;
+    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; persistDraft(); });
+    el.date.addEventListener('input', function(e) { state.date = e.target.value; persistDraft(); });
     container.querySelector('#' + p + '-save').addEventListener('click', save);
     container.querySelector('#' + p + '-reset').addEventListener('click', reset);
     container.querySelector('#' + p + '-print').addEventListener('click', function() { window.print(); });
+    container.querySelector('#' + p + '-save-combined').addEventListener('click', function() { saveCombinedReport(config.groupKey); });
 
     SS_SECTIONS.forEach(function(sec) {
       var wrap = container.querySelector('#' + p + '-svg-' + sec.id);
       renderSSSectionSVG(wrap, sec.id, state.measurements, function(ri, pi, val) {
         state.measurements[sec.id]['r' + ri][pi] = val;
         update();
+        persistDraft();
       });
     });
 
     update();
+  }
+
+  function persistDraft() {
+    saveDraftData(config.storageKey, { inspector: state.inspector, date: state.date, measurements: state.measurements });
   }
 
   function update() {
@@ -1714,12 +1914,12 @@ function createSlidingShoeModule(config) {
 
     results.forEach(function(r) {
       r.rowMaxes.forEach(function(mx, ri) {
-        var maxEl = document.getElementById(p + '-max-' + r.id + '-' + ri);
+        var maxEl = el.rowMax[r.id][ri];
         if (maxEl) maxEl.textContent = mx !== null ? mx.toFixed(3) + '"' : '—';
       });
-      var sumEl = document.getElementById(p + '-sum-' + r.id);
-      var stsEl = document.getElementById(p + '-sts-' + r.id);
-      var card  = document.getElementById(p + '-sec-' + r.id);
+      var sumEl = el.sum[r.id];
+      var stsEl = el.sts[r.id];
+      var card  = el.card[r.id];
       if (sumEl) sumEl.textContent = r.sum !== null ? r.sum.toFixed(3) + '"' : '—';
       if (stsEl) { stsEl.textContent = r.status ? r.status.label : '—'; stsEl.style.color = r.status ? r.status.color : ''; }
       if (card)  card.style.borderColor = r.status && r.status.key !== 'normal' ? r.status.color : '';
@@ -1751,17 +1951,19 @@ function createSlidingShoeModule(config) {
 
   function reset() {
     state.measurements = ssEmptyMeasurements();
+    clearDraft(config.storageKey);
     SS_SECTIONS.forEach(function(sec) {
-      var wrap = document.getElementById(p + '-svg-' + sec.id);
+      var wrap = containerRef.querySelector('#' + p + '-svg-' + sec.id);
       if (wrap) renderSSSectionSVG(wrap, sec.id, state.measurements, function(ri, pi, val) {
         state.measurements[sec.id]['r' + ri][pi] = val;
         update();
+        persistDraft();
       });
     });
     update();
   }
 
-  return { init: init };
+  return { init: init, config: config, type: 'slidingShoe' };
 }
 
 // =============================================================================
