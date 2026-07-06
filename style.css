@@ -574,6 +574,14 @@ body {
   background: var(--color-red);
   color: #fff;
 }
+.mill-admin-del:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+.mill-admin-del:disabled:hover {
+  background: none;
+  color: var(--color-red);
+}
 .mill-admin-add {
   display: flex;
   gap: .5rem;
