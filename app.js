@@ -46,23 +46,27 @@ function fmt4(n) {
 // STORE_KEY). Lets a tab's in-progress entry survive switching to another
 // tab, and lets other code (combined report) check "does this component
 // currently have anything entered" without needing it mounted on screen.
+//
+// Uses sessionStorage, not localStorage: in-progress work should not follow
+// you into tomorrow. It survives a page reload within the same browser tab,
+// but clears the moment the tab or browser closes.
 // =============================================================================
 
 function draftKey(storageKey) { return 'draft_' + storageKey; }
 
 function loadDraft(storageKey) {
   try {
-    var raw = localStorage.getItem(draftKey(storageKey));
+    var raw = sessionStorage.getItem(draftKey(storageKey));
     return raw ? JSON.parse(raw) : null;
   } catch (e) { return null; }
 }
 
 function saveDraftData(storageKey, data) {
-  try { localStorage.setItem(draftKey(storageKey), JSON.stringify(data)); } catch (e) {}
+  try { sessionStorage.setItem(draftKey(storageKey), JSON.stringify(data)); } catch (e) {}
 }
 
 function clearDraft(storageKey) {
-  try { localStorage.removeItem(draftKey(storageKey)); } catch (e) {}
+  try { sessionStorage.removeItem(draftKey(storageKey)); } catch (e) {}
 }
 
 function anyNonEmpty(val) {
@@ -75,6 +79,29 @@ function anyNonEmpty(val) {
 function draftHasData(storageKey) {
   var d = loadDraft(storageKey);
   return !!(d && d.measurements && anyNonEmpty(d.measurements));
+}
+
+// =============================================================================
+// SESSION META (Inspector name + Date)
+// Shared across every component for the current tab session, so typing your
+// name or setting the date once fills it in everywhere else automatically —
+// no retyping per component. Also sessionStorage: gone once the tab closes.
+// =============================================================================
+
+var SESSION_META_KEY = 'session_meta';
+
+function getSessionMeta() {
+  try {
+    var raw = sessionStorage.getItem(SESSION_META_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) { return {}; }
+}
+
+function setSessionMeta(patch) {
+  try {
+    var merged = Object.assign({}, getSessionMeta(), patch);
+    sessionStorage.setItem(SESSION_META_KEY, JSON.stringify(merged));
+  } catch (e) {}
 }
 
 // =============================================================================
@@ -697,8 +724,9 @@ function createFaceRingModule(config) {
   function init(container) {
     var draft = loadDraft(config.storageKey);
     state.measurements = (draft && draft.measurements) ? draft.measurements : { tb: '', lr: '', tlbr: '', trbl: '' };
-    state.inspector = (draft && draft.inspector) || '';
-    state.date = (draft && draft.date) || '';
+    var sessionMeta = getSessionMeta();
+    state.inspector = sessionMeta.inspector || (draft && draft.inspector) || '';
+    state.date = sessionMeta.date || (draft && draft.date) || '';
 
     var cardsHTML = LOCATIONS.map(function(loc) {
       return [
@@ -810,8 +838,8 @@ function createFaceRingModule(config) {
       });
     });
 
-    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; persistDraft(); });
-    el.date.addEventListener('input', function(e) { state.date = e.target.value; persistDraft(); });
+    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; setSessionMeta({ inspector: state.inspector }); persistDraft(); });
+    el.date.addEventListener('input', function(e) { state.date = e.target.value; setSessionMeta({ date: state.date }); persistDraft(); });
 
     container.querySelector('#' + p + '-save').addEventListener('click', save);
     container.querySelector('#' + p + '-reset').addEventListener('click', reset);
@@ -1053,8 +1081,9 @@ function createCenteringRingModule(config) {
   function init(container) {
     var draft = loadDraft(config.storageKey);
     state.measurements = (draft && draft.measurements) ? draft.measurements : { tb: '', lr: '' };
-    state.inspector = (draft && draft.inspector) || '';
-    state.date = (draft && draft.date) || '';
+    var sessionMeta = getSessionMeta();
+    state.inspector = sessionMeta.inspector || (draft && draft.inspector) || '';
+    state.date = sessionMeta.date || (draft && draft.date) || '';
 
     var cardsHTML = CENTERING_LOCATIONS.map(function(loc) {
       return [
@@ -1144,8 +1173,8 @@ function createCenteringRingModule(config) {
         persistDraft();
       });
     });
-    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; persistDraft(); });
-    el.date.addEventListener('input', function(e) { state.date = e.target.value; persistDraft(); });
+    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; setSessionMeta({ inspector: state.inspector }); persistDraft(); });
+    el.date.addEventListener('input', function(e) { state.date = e.target.value; setSessionMeta({ date: state.date }); persistDraft(); });
     container.querySelector('#' + p + '-save').addEventListener('click', save);
     container.querySelector('#' + p + '-reset').addEventListener('click', reset);
     container.querySelector('#' + p + '-print').addEventListener('click', function() { window.print(); });
@@ -1503,8 +1532,9 @@ function createSlipperModule(config) {
   function init(container) {
     var draft = loadDraft(config.storageKey);
     state.measurements = (draft && draft.measurements) ? draft.measurements : emptyMeasurements();
-    state.inspector = (draft && draft.inspector) || '';
-    state.date = (draft && draft.date) || '';
+    var sessionMeta = getSessionMeta();
+    state.inspector = sessionMeta.inspector || (draft && draft.inspector) || '';
+    state.date = sessionMeta.date || (draft && draft.date) || '';
 
     // Cards in a 2-col grid matching the slipper layout
     var cardsHTML = SLIPPER_LOCATIONS.map(function(loc) {
@@ -1595,8 +1625,8 @@ function createSlipperModule(config) {
         persistDraft();
       });
     });
-    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; persistDraft(); });
-    el.date.addEventListener('input', function(e) { state.date = e.target.value; persistDraft(); });
+    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; setSessionMeta({ inspector: state.inspector }); persistDraft(); });
+    el.date.addEventListener('input', function(e) { state.date = e.target.value; setSessionMeta({ date: state.date }); persistDraft(); });
     container.querySelector('#' + p + '-save').addEventListener('click', save);
     container.querySelector('#' + p + '-reset').addEventListener('click', reset);
     container.querySelector('#' + p + '-print').addEventListener('click', function() { window.print(); });
@@ -1802,8 +1832,9 @@ function createSlidingShoeModule(config) {
     containerRef = container;
     var draft = loadDraft(config.storageKey);
     state.measurements = (draft && draft.measurements) ? draft.measurements : ssEmptyMeasurements();
-    state.inspector = (draft && draft.inspector) || '';
-    state.date = (draft && draft.date) || '';
+    var sessionMeta = getSessionMeta();
+    state.inspector = sessionMeta.inspector || (draft && draft.inspector) || '';
+    state.date = sessionMeta.date || (draft && draft.date) || '';
 
     var sectionsHTML = SS_SECTIONS.map(function(sec) {
       return [
@@ -1891,8 +1922,8 @@ function createSlidingShoeModule(config) {
     if (!state.date) state.date = today;
     el.date.value = state.date;
     el.inspector.value = state.inspector;
-    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; persistDraft(); });
-    el.date.addEventListener('input', function(e) { state.date = e.target.value; persistDraft(); });
+    el.inspector.addEventListener('input', function(e) { state.inspector = e.target.value; setSessionMeta({ inspector: state.inspector }); persistDraft(); });
+    el.date.addEventListener('input', function(e) { state.date = e.target.value; setSessionMeta({ date: state.date }); persistDraft(); });
     container.querySelector('#' + p + '-save').addEventListener('click', save);
     container.querySelector('#' + p + '-reset').addEventListener('click', reset);
     container.querySelector('#' + p + '-print').addEventListener('click', function() { window.print(); });
