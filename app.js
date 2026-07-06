@@ -179,11 +179,87 @@ var FAMILY_LABELS = {
 // mill; otherwise new groups automatically default to the first mill in
 // their family's list (see getMillFor below).
 var GROUP_DEFAULT_MILL = {
-  steckel_bottom: 'SM01',
-  steckel_top:    'SM02',
-  rougher_bottom: 'RM01',
-  rougher_top:    'RM02'
+  steckel_bottom: 'SM03',
+  steckel_top:    'SM04',
+  rougher_bottom: 'RM03',
+  rougher_top:    'RM04'
 };
+
+// =============================================================================
+// SHARED REMOTE CONFIG (Firebase Realtime Database)
+// Wobbler pools and mill assignments used to be per-device only — this syncs
+// them across every computer that opens the app, via Firebase's plain REST
+// interface (no SDK needed, just fetch()).
+//
+// localStorage is kept as a fast, offline-friendly cache: reads still go
+// through getMillFor()/getWobblerPool() exactly as before and are instant.
+// On boot, syncFromRemote() pulls the latest shared values into that cache
+// (briefly, with a timeout so a dead network never hangs the app). On every
+// write (setMillFor/setWobblerPool), the change goes to localStorage AND is
+// pushed to Firebase in the background so other computers pick it up next
+// time they open or refresh the app.
+//
+// SECURITY NOTE: like the mill password, this database has no real
+// authentication behind it — the Firebase rules only restrict *which paths*
+// can be read/written, not *who* can. Anyone with the database URL could
+// read or write it directly, bypassing the app entirely. That's an
+// acceptable tradeoff for non-sensitive data like "which wobbler is
+// currently in service," but it is not a security boundary — same caveat
+// as the mill-change password elsewhere in this file.
+// =============================================================================
+
+var FIREBASE_URL = 'https://wobbler-inspection-default-rtdb.firebaseio.com';
+var REMOTE_SYNC_TIMEOUT_MS = 3000;
+
+function remoteGet(path) {
+  return fetch(FIREBASE_URL + '/' + path + '.json')
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .catch(function() { return null; });
+}
+
+function remotePut(path, value) {
+  fetch(FIREBASE_URL + '/' + path + '.json', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(value)
+  }).catch(function() { /* offline or unreachable — localStorage cache still has it */ });
+}
+
+// Seeds Firebase from this file's hardcoded defaults (not from whatever this
+// particular device's localStorage happens to hold) so the very first sync,
+// whichever computer happens to trigger it, can't accidentally push a stale
+// or device-specific value up as if it were the shared truth.
+function seedRemoteFromDefaults() {
+  var wobblerPools = { steckel: SM_MILLS.slice(), rougher: RM_MILLS.slice() };
+  var millAssignments = Object.assign({}, GROUP_DEFAULT_MILL);
+  remotePut('wobblerPools', wobblerPools);
+  remotePut('millAssignments', millAssignments);
+}
+
+function syncFromRemote() {
+  var timeout = new Promise(function(resolve) {
+    setTimeout(function() { resolve(null); }, REMOTE_SYNC_TIMEOUT_MS);
+  });
+  var fetched = remoteGet('');
+
+  return Promise.race([fetched, timeout]).then(function(remote) {
+    if (remote && remote.wobblerPools) {
+      Object.keys(remote.wobblerPools).forEach(function(family) {
+        localStorage.setItem('wobbler_pool_' + family, JSON.stringify(remote.wobblerPools[family]));
+      });
+    }
+    if (remote && remote.millAssignments) {
+      Object.keys(remote.millAssignments).forEach(function(groupKey) {
+        localStorage.setItem('mill_' + groupKey, remote.millAssignments[groupKey]);
+      });
+    }
+    if (!remote || (!remote.wobblerPools && !remote.millAssignments)) {
+      // Firebase is empty — first sync ever. Seed it so every computer after
+      // this one has something real to read.
+      seedRemoteFromDefaults();
+    }
+  });
+}
 
 function getGroupFamily(groupKey) {
   var parts = groupKey.split('_');
@@ -200,6 +276,7 @@ function getMillFor(groupKey) {
 
 function setMillFor(groupKey, mill) {
   localStorage.setItem('mill_' + groupKey, mill);
+  remotePut('millAssignments/' + groupKey, mill);
 }
 
 function getMillsForGroup(groupKey) {
@@ -208,8 +285,9 @@ function getMillsForGroup(groupKey) {
 
 // ---- Wobbler pool (the actual SM##/RM## units available to a mill family) ----
 // Defaults to SM_MILLS/RM_MILLS above; once a family's pool is edited via the
-// Manage Wobblers panel, the edited list is stored in localStorage per-device
-// under 'wobbler_pool_<family>' and takes over from the hardcoded default.
+// Manage Wobblers panel, the edited list is stored in localStorage under
+// 'wobbler_pool_<family>' and takes over from the hardcoded default. Synced
+// with Firebase (see above) so this is no longer per-device.
 
 function getWobblerPool(family) {
   var stored = localStorage.getItem('wobbler_pool_' + family);
@@ -224,6 +302,7 @@ function getWobblerPool(family) {
 
 function setWobblerPool(family, arr) {
   localStorage.setItem('wobbler_pool_' + family, JSON.stringify(arr));
+  remotePut('wobblerPools/' + family, arr);
 }
 
 function getWobblerPrefix(family) {
@@ -2144,6 +2223,17 @@ function activateTab(id) {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+  // Pull the latest shared mill/wobbler config before building the sidebar,
+  // so a fresh page load shows the current real-world assignment instead of
+  // whatever this computer happened to have cached locally. Bounded by
+  // REMOTE_SYNC_TIMEOUT_MS so a dead network never blocks the app from
+  // loading — it just falls back to the local cache.
+  syncFromRemote().then(function() {
+    buildNavAndBoot();
+  });
+});
+
+function buildNavAndBoot() {
   var nav = document.getElementById('module-nav');
   var firstTabId = null;
 
@@ -2176,5 +2266,5 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   if (firstTabId) activateTab(firstTabId);
-});
+}
 // PLACEHOLDER
