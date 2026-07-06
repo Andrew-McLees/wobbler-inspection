@@ -312,7 +312,6 @@ body {
 .mill-lock-btn:hover {
   color: var(--color-accent);
 }
-}
 
 /* ── Mill Modal ─────────────────────────────────────────────────────────────── */
 .mill-modal-overlay {
@@ -588,6 +587,15 @@ body {
 }
 .mill-admin-add .mill-modal-input {
   flex: 1;
+}
+
+/* ── Combined Report ────────────────────────────────────────────────────────── */
+/* Pages render inside #module-container itself (same as a single print),
+   so no visibility overrides are needed here — only page breaks between
+   the stacked components. */
+@media print {
+  .combined-report-page { page-break-after: always; }
+  .combined-report-page:last-child { page-break-after: auto; }
 }
 
 /* ── Responsive ─────────────────────────────────────────────────────────────── */

@@ -332,11 +332,19 @@ function saveCombinedReport(groupKey) {
     if (draft) storeSave(tab.module.config.storageKey, draft);
   });
 
-  var old = document.getElementById('combined-report-container');
-  if (old) old.remove();
-  var combined = document.createElement('div');
-  combined.id = 'combined-report-container';
-  document.body.appendChild(combined);
+  // Remember which tab is currently on screen so it can be restored after
+  // printing. Building the combined pages directly inside #module-container
+  // (replacing the live tab, same as activateTab already does) — rather
+  // than in a separate container shown alongside it — reuses the existing
+  // print CSS exactly as-is. An earlier version tried to hide the live view
+  // with its own CSS rule, but that rule lost a specificity fight against
+  // the pre-existing ".app-shell { display: block !important; }" print
+  // rule, so the live tab printed a second time ahead of the combined pages.
+  var activeBtn = document.querySelector('.sub-tab-btn.active');
+  var activeTabId = activeBtn ? activeBtn.dataset.tabId : null;
+
+  var container = document.getElementById('module-container');
+  container.innerHTML = '';
 
   included.forEach(function(tab) {
     var factory = MODULE_FACTORIES[tab.module.type];
@@ -346,7 +354,7 @@ function saveCombinedReport(groupKey) {
     var wrapper = document.createElement('div');
     wrapper.className = 'module-wrapper';
     page.appendChild(wrapper);
-    combined.appendChild(page);
+    container.appendChild(page);
     // Distinct DOM id prefix so this throwaway instance never collides with
     // the same tab if it happens to be live-mounted elsewhere on the page
     // right now — same storageKey underneath, so drafts/history still match.
@@ -364,15 +372,12 @@ function saveCombinedReport(groupKey) {
 
   var orig = document.title;
   document.title = filename;
-  document.body.classList.add('combined-print-mode');
 
   setTimeout(function() {
     window.print();
     setTimeout(function() {
       document.title = orig;
-      document.body.classList.remove('combined-print-mode');
-      var c = document.getElementById('combined-report-container');
-      if (c) c.remove();
+      if (activeTabId) activateTab(activeTabId);
     }, 1500);
   }, 80);
 }
