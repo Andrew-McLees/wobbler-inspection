@@ -222,7 +222,17 @@ function remotePut(path, value) {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(value)
-  }).catch(function() { /* offline or unreachable — localStorage cache still has it */ });
+  }).then(function(r) {
+    if (!r.ok) {
+      return r.text().then(function(body) {
+        console.error('Firebase write rejected for ' + path + ':', r.status, body);
+        showToast('Saved on this computer, but the shared database rejected the update (' + r.status + ') — other computers won\u2019t see this change', 'error');
+      });
+    }
+  }).catch(function(err) {
+    console.error('Firebase write failed for ' + path + ':', err);
+    showToast('Saved on this computer, but couldn\u2019t reach the shared database — other computers won\u2019t see this change until it\u2019s back online', 'error');
+  });
 }
 
 // Seeds Firebase from this file's hardcoded defaults (not from whatever this
