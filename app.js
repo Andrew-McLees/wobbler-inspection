@@ -211,10 +211,19 @@ var GROUP_DEFAULT_MILL = {
 var FIREBASE_URL = 'https://wobbler-inspection-default-rtdb.firebaseio.com';
 var REMOTE_SYNC_TIMEOUT_MS = 3000;
 
+// Resolves to { ok: true, value: <parsed JSON, or null if the path is
+// genuinely empty> } on a real HTTP success, or { ok: false } for anything
+// else — a non-2xx status (e.g. 401 permission denied) or a network error.
+// Callers must never treat ok:false the same as "confirmed empty": a
+// permission error or a dropped connection tells you nothing about whether
+// data exists, only that you couldn't read it just now.
 function remoteGet(path) {
   return fetch(FIREBASE_URL + '/' + path + '.json')
-    .then(function(r) { return r.ok ? r.json() : null; })
-    .catch(function() { return null; });
+    .then(function(r) {
+      if (!r.ok) return { ok: false };
+      return r.json().then(function(v) { return { ok: true, value: v }; });
+    })
+    .catch(function() { return { ok: false }; });
 }
 
 function remotePut(path, value) {
@@ -246,36 +255,44 @@ function seedRemoteFromDefaults() {
   remotePut('millAssignments', millAssignments);
 }
 
-var REMOTE_SYNC_TIMED_OUT = { __timedOut: true }; // distinct from a real "empty" response
+var REMOTE_SYNC_TIMED_OUT = { ok: false, timedOut: true };
 
 function syncFromRemote() {
+  // Read the two paths the database rules actually grant — NOT the root.
+  // Root has ".read": false in the rules (only its two named children are
+  // opened up), so a request for "/" is rejected outright (401) every time,
+  // no matter what data exists underneath. That misread — "401 means empty"
+  // — is what was silently reseeding the database on every page load.
+  var poolsFetch = remoteGet('wobblerPools');
+  var millsFetch = remoteGet('millAssignments');
+  var combined = Promise.all([poolsFetch, millsFetch]).then(function(r) {
+    return { ok: r[0].ok && r[1].ok, pools: r[0].value, mills: r[1].value };
+  });
+
   var timeout = new Promise(function(resolve) {
     setTimeout(function() { resolve(REMOTE_SYNC_TIMED_OUT); }, REMOTE_SYNC_TIMEOUT_MS);
   });
-  var fetched = remoteGet('');
 
-  return Promise.race([fetched, timeout]).then(function(remote) {
-    if (remote === REMOTE_SYNC_TIMED_OUT) {
-      // We gave up waiting — this does NOT mean Firebase is empty, only that
-      // it didn't answer in time (slow connection, momentary hiccup, etc).
-      // Never seed here: doing so would overwrite real shared data with
-      // hardcoded defaults just because a fetch was briefly slow. Fall back
-      // to whatever's already cached locally and try again next load.
+  return Promise.race([combined, timeout]).then(function(result) {
+    if (!result.ok) {
+      // Timeout, permission error, or network error — never conclude
+      // "empty" from a failure. Just keep using whatever's cached locally
+      // and try again next load.
       return;
     }
-    if (remote && remote.wobblerPools) {
-      Object.keys(remote.wobblerPools).forEach(function(family) {
-        localStorage.setItem('wobbler_pool_' + family, JSON.stringify(remote.wobblerPools[family]));
+    if (result.pools) {
+      Object.keys(result.pools).forEach(function(family) {
+        localStorage.setItem('wobbler_pool_' + family, JSON.stringify(result.pools[family]));
       });
     }
-    if (remote && remote.millAssignments) {
-      Object.keys(remote.millAssignments).forEach(function(groupKey) {
-        localStorage.setItem('mill_' + groupKey, remote.millAssignments[groupKey]);
+    if (result.mills) {
+      Object.keys(result.mills).forEach(function(groupKey) {
+        localStorage.setItem('mill_' + groupKey, result.mills[groupKey]);
       });
     }
-    if (!remote || (!remote.wobblerPools && !remote.millAssignments)) {
-      // The fetch genuinely completed and Firebase really has nothing —
-      // confirmed empty, not just slow. Safe to seed.
+    if (!result.pools && !result.mills) {
+      // Both reads genuinely succeeded (real HTTP 200s) and both came back
+      // truly empty — confirmed empty, not just unreadable. Safe to seed.
       seedRemoteFromDefaults();
     }
   });
