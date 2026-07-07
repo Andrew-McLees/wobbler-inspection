@@ -244,10 +244,15 @@ function remotePut(path, value) {
   });
 }
 
-// Seeds Firebase from this file's hardcoded defaults (not from whatever this
-// particular device's localStorage happens to hold) so the very first sync,
-// whichever computer happens to trigger it, can't accidentally push a stale
-// or device-specific value up as if it were the shared truth.
+// NOTE: intentionally not called automatically anywhere. The database has
+// already been seeded once (it has real data now). Auto-seeding on a plain
+// page load was the actual bug reported: a normal, unauthenticated page
+// open could end up writing to Firebase at all, which meant any bug in how
+// "empty" got detected could silently overwrite real shared data just by
+// someone opening the app. Now the only things that ever write to Firebase
+// are the password-protected actions below (setMillFor, setWobblerPool) —
+// a plain page load only ever reads. Kept here only in case a genuine
+// one-time reseed is ever needed by hand from the console.
 function seedRemoteFromDefaults() {
   var wobblerPools = { steckel: SM_MILLS.slice(), rougher: RM_MILLS.slice() };
   var millAssignments = Object.assign({}, GROUP_DEFAULT_MILL);
@@ -261,8 +266,14 @@ function syncFromRemote() {
   // Read the two paths the database rules actually grant — NOT the root.
   // Root has ".read": false in the rules (only its two named children are
   // opened up), so a request for "/" is rejected outright (401) every time,
-  // no matter what data exists underneath. That misread — "401 means empty"
-  // — is what was silently reseeding the database on every page load.
+  // no matter what data exists underneath.
+  //
+  // This function is READ-ONLY, on purpose: it must never write to Firebase
+  // under any circumstance, including a "the database looks empty" result.
+  // A plain page load has no password behind it, so if it could write, any
+  // bug in detecting "empty" (there was one) becomes a bug that can destroy
+  // shared data just by someone opening the app. Only the password-gated
+  // actions elsewhere (setMillFor, setWobblerPool) are allowed to write.
   var poolsFetch = remoteGet('wobblerPools');
   var millsFetch = remoteGet('millAssignments');
   var combined = Promise.all([poolsFetch, millsFetch]).then(function(r) {
@@ -275,9 +286,8 @@ function syncFromRemote() {
 
   return Promise.race([combined, timeout]).then(function(result) {
     if (!result.ok) {
-      // Timeout, permission error, or network error — never conclude
-      // "empty" from a failure. Just keep using whatever's cached locally
-      // and try again next load.
+      // Timeout, permission error, or network error — do nothing. Keep
+      // using whatever's cached locally and try again next load.
       return;
     }
     if (result.pools) {
@@ -290,11 +300,11 @@ function syncFromRemote() {
         localStorage.setItem('mill_' + groupKey, result.mills[groupKey]);
       });
     }
-    if (!result.pools && !result.mills) {
-      // Both reads genuinely succeeded (real HTTP 200s) and both came back
-      // truly empty — confirmed empty, not just unreadable. Safe to seed.
-      seedRemoteFromDefaults();
-    }
+    // No seeding here, ever — see the comment above. If both come back
+    // genuinely empty, the app just keeps using its local cache / hardcoded
+    // defaults until someone makes a real change through the password-
+    // protected mill picker or Manage Wobblers screen, which is the only
+    // thing that writes anything to the shared database.
   });
 }
 
