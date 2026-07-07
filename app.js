@@ -246,13 +246,23 @@ function seedRemoteFromDefaults() {
   remotePut('millAssignments', millAssignments);
 }
 
+var REMOTE_SYNC_TIMED_OUT = { __timedOut: true }; // distinct from a real "empty" response
+
 function syncFromRemote() {
   var timeout = new Promise(function(resolve) {
-    setTimeout(function() { resolve(null); }, REMOTE_SYNC_TIMEOUT_MS);
+    setTimeout(function() { resolve(REMOTE_SYNC_TIMED_OUT); }, REMOTE_SYNC_TIMEOUT_MS);
   });
   var fetched = remoteGet('');
 
   return Promise.race([fetched, timeout]).then(function(remote) {
+    if (remote === REMOTE_SYNC_TIMED_OUT) {
+      // We gave up waiting — this does NOT mean Firebase is empty, only that
+      // it didn't answer in time (slow connection, momentary hiccup, etc).
+      // Never seed here: doing so would overwrite real shared data with
+      // hardcoded defaults just because a fetch was briefly slow. Fall back
+      // to whatever's already cached locally and try again next load.
+      return;
+    }
     if (remote && remote.wobblerPools) {
       Object.keys(remote.wobblerPools).forEach(function(family) {
         localStorage.setItem('wobbler_pool_' + family, JSON.stringify(remote.wobblerPools[family]));
@@ -264,8 +274,8 @@ function syncFromRemote() {
       });
     }
     if (!remote || (!remote.wobblerPools && !remote.millAssignments)) {
-      // Firebase is empty — first sync ever. Seed it so every computer after
-      // this one has something real to read.
+      // The fetch genuinely completed and Firebase really has nothing —
+      // confirmed empty, not just slow. Safe to seed.
       seedRemoteFromDefaults();
     }
   });
