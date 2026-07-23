@@ -745,7 +745,7 @@ function renderFaceRing(container, locations) {
   var readouts = {};
   container.innerHTML = '';
 
-  var svg = svgEl('svg', { viewBox: '0 0 400 400', class: 'face-ring-svg' });
+  var svg = svgEl('svg', { viewBox: '0 0 400 400', width: 400, height: 400, class: 'face-ring-svg' });
 
   svg.appendChild(svgEl('circle', { cx: CX, cy: CY, r: OR,  fill: 'none', stroke: '#4A5568', 'stroke-width': 3 }));
   svg.appendChild(svgEl('circle', { cx: CX, cy: CY, r: IR,  fill: 'none', stroke: '#4A5568', 'stroke-width': 2 }));
@@ -1146,7 +1146,7 @@ function renderCenteringRing(container) {
   var readouts   = {};
   container.innerHTML = '';
 
-  var svg = svgEl('svg', { viewBox: '0 0 400 400', class: 'face-ring-svg' });
+  var svg = svgEl('svg', { viewBox: '0 0 400 400', width: 400, height: 400, class: 'face-ring-svg' });
 
   // Outer ring
   svg.appendChild(svgEl('circle', { cx: CX, cy: CY, r: 148, fill: 'none', stroke: '#4A5568', 'stroke-width': 3 }));
@@ -1496,7 +1496,7 @@ function renderSlipperSVG(container) {
   // Right face  = fTR, rTR, rBR, fBR  (wide, holds 6 bolts)
 
   var VW = 600, VH = 370;
-  var svg = svgEl('svg', { viewBox: '0 0 ' + VW + ' ' + VH, class: 'face-ring-svg slipper-svg' });
+  var svg = svgEl('svg', { viewBox: '0 0 ' + VW + ' ' + VH, width: VW, height: VH, class: 'face-ring-svg slipper-svg' });
 
   // Slab dimensions in SVG units
   var FW  = 42;    // front face width  (narrow — short end of slab)
@@ -1942,7 +1942,7 @@ function computeSSResults(measurements) {
 function renderSSSectionSVG(container, sectionId, measurements, onInput) {
   container.innerHTML = '';
   var VW = 200, VH = 220, cx = 100, cy = 110, arcR = 72;
-  var svg = svgEl('svg', { viewBox: '0 0 ' + VW + ' ' + VH, width: '100%', height: '100%' });
+  var svg = svgEl('svg', { viewBox: '0 0 ' + VW + ' ' + VH, width: VW, height: VH });
 
   function arcPath(startDeg, endDeg, r) {
     var s = startDeg * Math.PI / 180, e = endDeg * Math.PI / 180;
