@@ -551,7 +551,22 @@ function saveCombinedReport(groupKey) {
       margin: 0.25,
       filename: filename + '.pdf',
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        // html2canvas otherwise captures whatever is currently inside the
+        // visible window at its current scroll position — if the page was
+        // scrolled at all, or the container is wider/taller than the
+        // viewport, anything past that boundary gets sliced off. Pinning
+        // scroll to 0 and telling it the container's real full size makes
+        // it capture the whole thing regardless of where the window
+        // happened to be scrolled or sized when "Save Combined Report"
+        // was clicked.
+        scrollX: 0,
+        scrollY: 0,
+        windowWidth: container.scrollWidth,
+        windowHeight: container.scrollHeight
+      },
       jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' },
       pagebreak: { mode: ['css', 'legacy'] }
     }).from(container).save().then(cleanup).catch(function(err) {
