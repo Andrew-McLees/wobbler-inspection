@@ -13,13 +13,16 @@
 
 <div class="app-shell">
   <header class="app-header">
+    <button id="nav-toggle" class="nav-toggle-btn" aria-label="Toggle navigation" aria-expanded="false" aria-controls="app-nav">
+      <span></span><span></span><span></span>
+    </button>
     <div>
       <div class="app-logo">Wobbler <span>Inspection</span></div>
       <div class="app-subtitle">Mechanical Inspection System</div>
     </div>
   </header>
 
-  <nav class="app-nav">
+  <nav class="app-nav" id="app-nav">
     <div class="nav-label">Modules</div>
     <div id="module-nav"></div>
   </nav>

@@ -53,6 +53,37 @@ body {
 .app-logo span { color: var(--color-accent); }
 .app-subtitle { font-size: .8rem; color: var(--color-muted); font-family: var(--font-mono); }
 
+/* ── Nav Toggle (hamburger) ───────────────────────────────────────────────────
+   Hidden on desktop; only shown at the mobile breakpoint below. */
+.nav-toggle-btn {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 36px;
+  height: 36px;
+  padding: 6px;
+  margin-right: 1rem;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color var(--transition);
+}
+.nav-toggle-btn:hover { border-color: var(--color-accent); }
+.nav-toggle-btn span {
+  display: block;
+  width: 100%;
+  height: 2px;
+  background: var(--color-text);
+  border-radius: 2px;
+  transition: transform var(--transition), opacity var(--transition);
+}
+.nav-toggle-btn.active span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.nav-toggle-btn.active span:nth-child(2) { opacity: 0; }
+.nav-toggle-btn.active span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
 /* ── Nav ────────────────────────────────────────────────────────────────────── */
 .app-nav {
   grid-area: nav;
@@ -607,9 +638,27 @@ body {
     grid-template-columns: 1fr;
     grid-template-areas: "header" "nav" "main";
   }
-  .app-nav { border-right: none; border-bottom: 1px solid var(--color-border); padding: .75rem; }
-  #module-nav { flex-direction: row; flex-wrap: wrap; }
-  .sub-tab-btn { width: auto; padding-left: 1rem; }
+
+  .nav-toggle-btn { display: flex; }
+
+  /* Nav becomes a collapsible drawer under the header — closed by default,
+     opened by the hamburger button, and auto-closed on tab select. */
+  .app-nav {
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+    padding: 0;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 200ms ease, padding var(--transition);
+  }
+  .app-nav.nav-open {
+    max-height: 70vh;
+    overflow-y: auto;
+    padding: .75rem;
+  }
+
+  #module-nav { flex-direction: column; }
+  .sub-tab-btn { width: 100%; padding-left: 1.5rem; }
   .nav-group-label { padding: .4rem .5rem; border-top: none; margin-top: 0; font-size: .7rem; }
 }
 @media (max-width: 540px) {

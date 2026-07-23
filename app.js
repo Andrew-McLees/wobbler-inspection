@@ -2366,7 +2366,54 @@ function activateTab(id) {
   wrapper.className = 'module-wrapper';
   container.appendChild(wrapper);
   tab.module.init(wrapper);
+
+  // On mobile widths the nav is an off-canvas drawer — close it once a
+  // module has been picked so the user lands straight on the content.
+  closeMobileNav();
 }
+
+var MOBILE_NAV_BREAKPOINT = 900;
+
+function closeMobileNav() {
+  if (window.innerWidth > MOBILE_NAV_BREAKPOINT) return;
+  var navEl = document.getElementById('app-nav');
+  var toggleBtn = document.getElementById('nav-toggle');
+  if (navEl) navEl.classList.remove('nav-open');
+  if (toggleBtn) {
+    toggleBtn.classList.remove('active');
+    toggleBtn.setAttribute('aria-expanded', 'false');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  var navEl = document.getElementById('app-nav');
+  var toggleBtn = document.getElementById('nav-toggle');
+  if (!navEl || !toggleBtn) return;
+
+  toggleBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    var isOpen = navEl.classList.toggle('nav-open');
+    toggleBtn.classList.toggle('active', isOpen);
+    toggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  });
+
+  // Tapping anywhere outside the open drawer closes it.
+  document.addEventListener('click', function(e) {
+    if (!navEl.classList.contains('nav-open')) return;
+    if (navEl.contains(e.target) || toggleBtn.contains(e.target)) return;
+    closeMobileNav();
+  });
+
+  // If the window is resized/rotated past the mobile breakpoint, drop any
+  // leftover open/active state so the desktop layout isn't affected.
+  window.addEventListener('resize', function() {
+    if (window.innerWidth > MOBILE_NAV_BREAKPOINT) {
+      navEl.classList.remove('nav-open');
+      toggleBtn.classList.remove('active');
+      toggleBtn.setAttribute('aria-expanded', 'false');
+    }
+  });
+});
 
 document.addEventListener('DOMContentLoaded', function() {
   // Pull the latest shared mill/wobbler config before building the sidebar,
