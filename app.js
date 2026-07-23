@@ -546,30 +546,87 @@ function saveCombinedReport(groupKey) {
     if (activeTabId) activateTab(activeTabId);
   }
 
+  // html2canvas has a longstanding, well-documented limitation: it cannot
+  // reliably rasterize inline <svg> content (the ring/slipper/shoe diagrams
+  // here) — it just leaves the space blank, regardless of width/height
+  // attributes. The fix is to sidestep html2canvas entirely for these: render
+  // each SVG through the browser's own (fully capable) SVG engine into a
+  // real PNG image first, then swap that <img> in for the live <svg> node
+  // before handing the page to html2canvas. Since this container is a
+  // throwaway export copy that gets torn down right after (see cleanup()),
+  // there's no live UI to restore afterward — replacing the nodes in place
+  // is safe.
+  function svgToImageDataUrl(svg, scale) {
+    return new Promise(function(resolve, reject) {
+      var w = parseFloat(svg.getAttribute('width')) || svg.viewBox.baseVal.width || 400;
+      var h = parseFloat(svg.getAttribute('height')) || svg.viewBox.baseVal.height || 400;
+      var clone = svg.cloneNode(true);
+      clone.setAttribute('width', w);
+      clone.setAttribute('height', h);
+      clone.setAttribute('xmlns', SVG_NS);
+      var xml = new XMLSerializer().serializeToString(clone);
+      var blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var img = new Image();
+      img.onload = function() {
+        var canvas = document.createElement('canvas');
+        canvas.width = w * scale;
+        canvas.height = h * scale;
+        var ctx = canvas.getContext('2d');
+        ctx.scale(scale, scale);
+        ctx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        resolve({ dataUrl: canvas.toDataURL('image/png'), w: w, h: h });
+      };
+      img.onerror = function(e) { URL.revokeObjectURL(url); reject(e); };
+      img.src = url;
+    });
+  }
+
+  function replaceSvgsWithImages(root) {
+    var svgs = Array.prototype.slice.call(root.querySelectorAll('svg'));
+    return Promise.all(svgs.map(function(svg) {
+      return svgToImageDataUrl(svg, 2).then(function(result) {
+        var img = document.createElement('img');
+        img.src = result.dataUrl;
+        img.alt = '';
+        img.className = svg.getAttribute('class') || '';
+        img.style.width = '100%';
+        img.style.height = '100%';
+        img.style.display = 'block';
+        svg.parentNode.replaceChild(img, svg);
+      }).catch(function(err) {
+        console.error('Diagram could not be converted for PDF export:', err);
+      });
+    }));
+  }
+
   setTimeout(function() {
-    html2pdf().set({
-      margin: 0.25,
-      filename: filename + '.pdf',
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: {
-        scale: 2,
-        useCORS: true,
-        // html2canvas otherwise captures whatever is currently inside the
-        // visible window at its current scroll position — if the page was
-        // scrolled at all, or the container is wider/taller than the
-        // viewport, anything past that boundary gets sliced off. Pinning
-        // scroll to 0 and telling it the container's real full size makes
-        // it capture the whole thing regardless of where the window
-        // happened to be scrolled or sized when "Save Combined Report"
-        // was clicked.
-        scrollX: 0,
-        scrollY: 0,
-        windowWidth: container.scrollWidth,
-        windowHeight: container.scrollHeight
-      },
-      jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' },
-      pagebreak: { mode: ['css', 'legacy'] }
-    }).from(container).save().then(cleanup).catch(function(err) {
+    replaceSvgsWithImages(container).then(function() {
+      return html2pdf().set({
+        margin: 0.25,
+        filename: filename + '.pdf',
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          // html2canvas otherwise captures whatever is currently inside the
+          // visible window at its current scroll position — if the page was
+          // scrolled at all, or the container is wider/taller than the
+          // viewport, anything past that boundary gets sliced off. Pinning
+          // scroll to 0 and telling it the container's real full size makes
+          // it capture the whole thing regardless of where the window
+          // happened to be scrolled or sized when "Save Combined Report"
+          // was clicked.
+          scrollX: 0,
+          scrollY: 0,
+          windowWidth: container.scrollWidth,
+          windowHeight: container.scrollHeight
+        },
+        jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'] }
+      }).from(container).save();
+    }).then(cleanup).catch(function(err) {
       cleanup();
       showToast('Could not generate PDF — please try again', 'error');
       console.error('saveCombinedReport PDF export failed:', err);
