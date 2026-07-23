@@ -728,3 +728,115 @@ body {
   .slipper-svg text   { fill: #333 !important; }
   .ss-point-input     { border: 1pt solid #999 !important; font-size: 7pt; }
 }
+
+/* ── PDF export (JS-driven, no browser print dialog) ─────────────────────────
+   Mirrors the @media print block above, rule for rule, but scoped to a
+   `.pdf-render-mode` class instead of the print media type. @media print only
+   applies inside the browser's own print engine (window.print()), which is
+   also where the "Save as PDF" destination and OS/browser filename handling
+   live — neither of which JS can control. html2canvas (used by
+   saveCombinedReportAsPDF in app.js) renders the page as it's normally
+   displayed on screen, so it never sees @media print rules at all. Toggling
+   this class on <body> during export gets the identical clean report layout
+   (no nav/chrome, flattened floats, black-on-white) through a path we fully
+   control end-to-end, including the exact output filename, on desktop and
+   mobile alike.
+   NOTE: keep this in sync with the @media print block above if that changes.
+────────────────────────────────────────────────────────────────────────── */
+.pdf-render-mode .app-nav, .pdf-render-mode .app-header, .pdf-render-mode .action-bar, .pdf-render-mode #app-toast,
+.pdf-render-mode .mill-modal-overlay, .pdf-render-mode .mill-lock-btn { display: none !important; }
+
+.pdf-render-mode .app-shell { display: block !important; }
+.pdf-render-mode .app-main  { display: block !important; padding: 0 !important; overflow: visible !important; }
+.pdf-render-mode #module-container, .pdf-render-mode .module-wrapper { display: block !important; max-width: none !important; }
+
+.pdf-render-mode * {
+  background: #fff !important;
+  background-color: #fff !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  color: #000 !important;
+  border-color: #ccc !important;
+}
+
+.pdf-render-mode .module-title  { font-size: 16pt; }
+.pdf-render-mode .module-header { border-bottom: 2pt solid #000 !important; padding-bottom: .5rem; margin-bottom: .75rem; }
+.pdf-render-mode .status-banner { border: 2pt solid #000 !important; font-size: 13pt; margin-bottom: .75rem; }
+.pdf-render-mode .meta-input    { border: 1pt solid #ccc !important; }
+
+.pdf-render-mode .module-body { display: block !important; }
+.pdf-render-mode .module-body::after { content: ''; display: table; clear: both; }
+.pdf-render-mode .ring-panel  { float: left; width: 42%; margin-right: 3%; border: 1pt solid #ccc; }
+.pdf-render-mode .data-panel  { float: left; width: 55%; }
+.pdf-render-mode .data-panel::after { content: ''; display: table; clear: both; }
+
+.pdf-render-mode .measurements-grid { display: block !important; }
+.pdf-render-mode .measurements-grid::after { content: ''; display: table; clear: both; }
+.pdf-render-mode .measurement-card {
+  float: left;
+  width: 47%;
+  margin-right: 2%;
+  margin-bottom: .4rem;
+  border: 1pt solid #ccc;
+  page-break-inside: avoid;
+  box-sizing: border-box;
+}
+.pdf-render-mode .measurement-card:nth-child(2n) { margin-right: 0; }
+
+.pdf-render-mode .slipper-grid { display: block !important; }
+.pdf-render-mode .slipper-grid::after { content: ''; display: table; clear: both; }
+.pdf-render-mode .slipper-grid .measurement-card {
+  float: left;
+  width: 31%;
+  margin-right: 2%;
+  margin-bottom: .4rem;
+  border: 1pt solid #ccc;
+  page-break-inside: avoid;
+  box-sizing: border-box;
+}
+.pdf-render-mode .slipper-grid .measurement-card:nth-child(3n) { margin-right: 0; }
+.pdf-render-mode .slipper-grid .measurement-card:nth-child(4)  { clear: left; }
+
+.pdf-render-mode .ss-grid { display: block !important; }
+.pdf-render-mode .ss-grid::after { content: ''; display: table; clear: both; }
+.pdf-render-mode .ss-section-card {
+  float: left;
+  width: 47%;
+  margin-right: 2%;
+  margin-bottom: .75rem;
+  border: 1pt solid #ccc;
+  page-break-inside: avoid;
+  box-sizing: border-box;
+}
+.pdf-render-mode .ss-section-card:nth-child(2n) { margin-right: 0; }
+.pdf-render-mode .ss-section-card:nth-child(3)  { clear: left; page-break-before: always; }
+
+.pdf-render-mode .ss-section-body { display: block !important; }
+.pdf-render-mode .ss-section-body::after { content: ''; display: table; clear: both; }
+.pdf-render-mode .ss-svg-wrap    { float: left; width: 45%; margin-right: 3%; }
+.pdf-render-mode .ss-row-summary { float: left; width: 52%; }
+.pdf-render-mode .ss-section-footer { clear: both; border-top: 1pt solid #ccc; padding-top: .3rem; margin-top: .3rem; }
+
+.pdf-render-mode .table-section { clear: both; margin-top: .75rem; border: 1pt solid #ccc; padding: .5rem; }
+.pdf-render-mode .slipper-module ~ .table-section,
+.pdf-render-mode .ss-grid ~ .table-section { page-break-before: always; }
+.pdf-render-mode .inspection-table { width: 100%; }
+.pdf-render-mode .inspection-table tr { page-break-inside: avoid; }
+
+.pdf-render-mode .inspection-table tr.s-yellow td { color: #856404 !important; }
+.pdf-render-mode .inspection-table tr.s-orange td { color: #7D3C00 !important; }
+.pdf-render-mode .inspection-table tr.s-red    td { color: #B22222 !important; }
+
+.pdf-render-mode .card-input::placeholder { color: transparent !important; }
+.pdf-render-mode .ss-point-input::placeholder { color: transparent !important; }
+.pdf-render-mode .meta-input::placeholder { color: transparent !important; }
+
+.pdf-render-mode .face-ring-svg text { fill: #000 !important; }
+.pdf-render-mode .slipper-svg text   { fill: #333 !important; }
+.pdf-render-mode .ss-point-input     { border: 1pt solid #999 !important; font-size: 7pt; }
+
+/* Each combined-report page starts on its own PDF page (read by the
+   pagebreak plugin's 'css' mode via page-break-before on all but the first) */
+.pdf-render-mode .combined-report-page { page-break-before: always; }
+.pdf-render-mode .combined-report-page:first-child { page-break-before: avoid; }

@@ -520,18 +520,45 @@ function saveCombinedReport(groupKey) {
   var componentLabels = included.map(function(tab) { return tab.label; });
   var mill = getMillFor(groupKey);
   var wobblerLabel = getGroupDisplayName(groupKey);
-  var d = new Date().toISOString().slice(0, 10);
+  // Use the actual inspection date, same fallback order used everywhere else
+  // (session-wide date first, then whatever was saved on the first included
+  // component's draft), only falling back to today if neither exists.
+  var sessionMeta = getSessionMeta();
+  var firstDraft = loadDraft(included[0].module.config.storageKey);
+  var d = sessionMeta.date || (firstDraft && firstDraft.date) || new Date().toISOString().slice(0, 10);
   var filename = d + ' - ' + mill + ' ' + wobblerLabel + ' - ' + componentLabels.join(' - ');
 
-  var orig = document.title;
-  document.title = filename;
+  // Generate the PDF ourselves and hand the browser a finished file with an
+  // exact filename, rather than opening window.print() and hoping the
+  // browser/OS default to "Save as PDF" and pick up document.title for the
+  // name. This works the same way on desktop and mobile: no print dialog,
+  // no destination picker, no platform-dependent title handling — just a
+  // file download (or mobile "save/share" prompt) with the right name.
+  //
+  // .pdf-render-mode (see style.css) mirrors the old @media print rules so
+  // the exported PDF still gets the same clean report layout as before;
+  // @media print only applies inside window.print()'s own engine, which
+  // html2canvas never triggers, so that class does the same job here.
+  document.body.classList.add('pdf-render-mode');
+
+  function cleanup() {
+    document.body.classList.remove('pdf-render-mode');
+    if (activeTabId) activateTab(activeTabId);
+  }
 
   setTimeout(function() {
-    window.print();
-    setTimeout(function() {
-      document.title = orig;
-      if (activeTabId) activateTab(activeTabId);
-    }, 1500);
+    html2pdf().set({
+      margin: 0.25,
+      filename: filename + '.pdf',
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'] }
+    }).from(container).save().then(cleanup).catch(function(err) {
+      cleanup();
+      showToast('Could not generate PDF — please try again', 'error');
+      console.error('saveCombinedReport PDF export failed:', err);
+    });
   }, 80);
 }
 
